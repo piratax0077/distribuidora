@@ -3,8 +3,16 @@
 /public/storage
 /public_original/storage
 /xml/generados
+/cert
+/cert_sii
 /storage/*.key
 /vendor
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
 .env
 .env.backup
 .phpunit.result.cache
