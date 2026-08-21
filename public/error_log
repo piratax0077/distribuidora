@@ -1,0 +1,2 @@
+[16-Aug-2024 17:22:39 America/Santiago] PHP Warning:  Unterminated comment starting line 5378 in /home/ipschile/intranet.ipschile.cl/app/Http/Controllers/ventas_controlador.php on line 5378
+[25-Dec-2024 13:22:15 America/Santiago] PHP Fatal error:  Class App\Exports\DetalleVentasExport contains 1 abstract method and must therefore be declared abstract or implement the remaining methods (Maatwebsite\Excel\Concerns\WithColumnFormatting::columnFormats) in /home/ipschile/intranet.ipschile.cl/app/Exports/DetalleVentasExport.php on line 17
