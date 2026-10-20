@@ -31,7 +31,7 @@
     <title>@yield('titulo','Default') | {{config('app.name')}}</title>
     <section>
         <script src="https://code.jquery.com/jquery-3.6.0.js" integrity="sha256-H+K7U5CnXl1h5ywQfKtSj8PCmoN9aaq30gDh27Xc0jk=" crossorigin="anonymous"></script>
-        <script type='text/javascript' src="https://rawgit.com/RobinHerbots/jquery.inputmask/3.x/dist/jquery.inputmask.bundle.js"></script>
+        <script type='text/javascript' src="https://cdn.jsdelivr.net/gh/RobinHerbots/jquery.inputmask@3.x/dist/jquery.inputmask.bundle.js"></script>
         <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.1/Chart.min.js"> </script>
         <script src="{{asset('js/mis-libs.js')}}"></script>
         <script src="https://pagination.js.org/dist/2.6.0/pagination.min.js"></script>

@@ -172,16 +172,16 @@ class ClsSii
 
     public static function enviar_sii($RutEnvia, $RutEmisor,$xml)
     {
-    
+
         $Firma=self::dame_firma();
 
         $Token=Auto::getToken($Firma);
-        
+
         if($Token===false){
             $estado=['estado'=>'ERROR_TOKEN','mensaje'=>'SII no me entregó TOKEN de seguridad'];
             return $estado;
         }
-       
+
         try {
             $resultado = Sii::enviar($RutEnvia, $RutEmisor, $xml, $Token);
 
@@ -276,13 +276,12 @@ class ClsSii
     public static function dame_firma()
     {
         try {
-            $clave1="9641";
-            $clave2="pancho1048";
-            $archivo_firma=base_path().'/cert/cert_ips.pfx';
+            $clave = env('SII_CERT_PASSWORD');
+            $archivo_firma = base_path().'/cert/cert_ips.pfx';
 
             if(is_readable($archivo_firma))
             {
-                $firma_config=['file'=>$archivo_firma,'pass'=>$clave1];
+                $firma_config = ['file' => $archivo_firma, 'pass' => $clave];
                 $Firma=new FirmaElectronica($firma_config);
                 return $Firma;
             }else{

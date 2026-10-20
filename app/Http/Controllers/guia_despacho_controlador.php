@@ -41,6 +41,7 @@ use App\factura_detalle;
 use App\pago;
 use App\devolucion_mercaderia;
 use App\devolucion_mercaderia_detalle;
+use App\Services\StockService;
 
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -433,6 +434,32 @@ class guia_despacho_controlador extends Controller
                     ->get();
             }
 
+            // Para una NC se muestran únicamente los productos y cantidades
+            // efectivamente acreditados, no el detalle completo de la venta.
+            $detalle = nota_de_credito_detalle::select(
+                    'notas_de_credito_detalle.id_nota_de_credito as id_doc',
+                    'notas_de_credito_detalle.id_repuestos',
+                    'notas_de_credito_detalle.cantidad',
+                    'notas_de_credito_detalle.id_local',
+                    'notas_de_credito_detalle.precio_venta as precio_documento',
+                    'repuestos.codigo_interno',
+                    'repuestos.descripcion',
+                    'locales.local_nombre'
+                )
+                ->join('locales', 'notas_de_credito_detalle.id_local', '=', 'locales.id')
+                ->join('repuestos', 'notas_de_credito_detalle.id_repuestos', '=', 'repuestos.id')
+                ->where('notas_de_credito_detalle.id_nota_de_credito', $nc->id)
+                ->get();
+
+            foreach ($detalle as $item) {
+                $item->cantidad_disponible = $this->obtenerCantidadDisponibleDevolucion(
+                    $numeroNc,
+                    'nc',
+                    (int) $item->id_repuestos,
+                    (int) $item->id_local
+                );
+            }
+
             $devoluciones = $this->damedevoluciones($numeroNc);
 
             $documento->num_nota_credito = $nc->num_nota_credito;
@@ -722,6 +749,7 @@ class guia_despacho_controlador extends Controller
                     )
                     ->where('tipo_doc', $tipoDocumento)
                     ->where('repuesto_id', $idRepuesto)
+                    ->where('local_id', $localId)
                     ->where('activo', 1)
                     ->lockForUpdate()
                     ->first();
@@ -743,7 +771,8 @@ class guia_despacho_controlador extends Controller
                     ->obtenerCantidadDisponibleDevolucion(
                         $numeroDocumento,
                         $tipoDocumento,
-                        $idRepuesto
+                        $idRepuesto,
+                        $localId
                     );
 
                 if ($cantidadDisponible <= 0) {
@@ -845,11 +874,13 @@ class guia_despacho_controlador extends Controller
 private function obtenerCantidadDisponibleDevolucion(
     $numeroDocumento,
     $tipoDocumento,
-    $idRepuesto
+    $idRepuesto,
+    $localId
 ) {
     $numeroDocumento = trim((string) $numeroDocumento);
     $tipoDocumento = strtolower(trim((string) $tipoDocumento));
     $idRepuesto = (int) $idRepuesto;
+    $localId = (int) $localId;
 
     /*
      * Cantidad original vendida en el documento.
@@ -957,6 +988,16 @@ private function obtenerCantidadDisponibleDevolucion(
                 ->where('id_repuestos', $idRepuesto)
                 ->sum('cantidad');
         }
+
+        // Una NC parcial autoriza sólo la mercadería incluida en su detalle.
+        // No debe heredarse la cantidad completa de la venta referenciada.
+        $cantidadVendida = nota_de_credito_detalle::where(
+                'id_nota_de_credito',
+                $notaCredito->id
+            )
+            ->where('id_repuestos', $idRepuesto)
+            ->where('id_local', $localId)
+            ->sum('cantidad');
     } elseif ($tipoDocumento === 'bo') {
         $documento = boleta::where(
                 'num_boleta',
@@ -977,6 +1018,7 @@ private function obtenerCantidadDisponibleDevolucion(
                 $documento->id
             )
             ->where('id_repuestos', $idRepuesto)
+            ->where('id_local', $localId)
             ->sum('cantidad');
     } elseif ($tipoDocumento === 'fa') {
         $documento = factura::where(
@@ -998,6 +1040,7 @@ private function obtenerCantidadDisponibleDevolucion(
                 $documento->id
             )
             ->where('id_repuestos', $idRepuesto)
+            ->where('id_local', $localId)
             ->sum('cantidad');
     } else {
         throw \Illuminate\Validation\ValidationException
@@ -1024,7 +1067,7 @@ private function obtenerCantidadDisponibleDevolucion(
         )
         ->where('tipo_doc', $tipoDocumento)
         ->where('repuesto_id', $idRepuesto)
-        ->where('activo', 1)
+        ->where('local_id', $localId)
         ->sum('cantidad');
 
     return max(
@@ -1240,6 +1283,14 @@ private function obtenerCantidadDisponibleDevolucion(
                             ]);
                     }
 
+                    $stockColumn = app(StockService::class)
+                        ->columnForLocal($repuesto, $localId);
+                    $repuesto->{$stockColumn} =
+                        (int) $repuesto->{$stockColumn} + $cantidad;
+
+                    // Se conserva temporalmente la referencia histórica de mapeo,
+                    // pero la ejecución usa la configuración real del repuesto.
+                    if (false) {
                     switch ($localId) {
                         case 1:
                             $repuesto->stock_actual =
@@ -1271,6 +1322,7 @@ private function obtenerCantidadDisponibleDevolucion(
                                     'local_id' =>
                                         'La ubicación de destino no tiene una columna de stock configurada.',
                                 ]);
+                    }
                     }
 
                     $repuesto->save();

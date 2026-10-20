@@ -4,6 +4,12 @@
 <script>
     const PARAM_IVA = {{ $iva }};
 
+    function escapeHtml(valor) {
+        return String(valor ?? '').replace(/[&<>'"]/g, caracter => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        })[caracter]);
+    }
+
     function buscar_nota_venta() {
         let num = document.getElementById('numero_nv').value.trim();
         if (num === '' || isNaN(num)) {
@@ -43,6 +49,7 @@
     function mostrar_nota_venta(rpta) {
         let nv = rpta.nota_venta;
         let detalle = rpta.detalle;
+        let seguimiento = rpta.seguimiento || {};
         let estado_actual = rpta.estado_nv; // 1=activo, 0=deshabilitado
         let btn_color = estado_actual == 1 ? 'btn-danger' : 'btn-success';
         let btn_texto = estado_actual == 1 ? 'Deshabilitar Nota de Venta' : 'Habilitar Nota de Venta';
@@ -60,7 +67,52 @@
                     ${btn_texto}
                 </button>
             </div>
-            <div class="card-body p-0">
+            <div class="card-body">
+                <div class="alert alert-light border mb-3">
+                    <div class="row">
+                        <div class="col-md-4 mb-2">
+                            <label class="font-weight-bold">Estado del pedido</label>
+                            <select id="estado_pedido_nv" class="form-control">${opcionesEstado(rpta.opciones_estados.pedido, seguimiento.estado_pedido)}</select>
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label class="font-weight-bold"><i class="fas fa-credit-card mr-1"></i> Estado del pago</label>
+                            <select id="estado_pago_nv" class="form-control" onchange="actualizarVistaEstadoPago()">${opcionesEstado(rpta.opciones_estados.pago, seguimiento.estado_pago)}</select>
+                            <div id="resumen_estado_pago_nv" class="mt-2"></div>
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label class="font-weight-bold">Estado de entrega</label>
+                            <select id="estado_entrega_nv" class="form-control">${opcionesEstado(rpta.opciones_estados.entrega, seguimiento.estado_entrega)}</select>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <label>Tipo de entrega</label>
+                            <select id="tipo_entrega_nv" class="form-control">
+                                <option value="">Sin especificar</option>
+                                <option value="domicilio" ${seguimiento.tipo_entrega === 'domicilio' ? 'selected' : ''}>Envío a domicilio</option>
+                                <option value="retiro" ${seguimiento.tipo_entrega === 'retiro' ? 'selected' : ''}>Retiro en tienda</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label>Transportista</label>
+                            <input id="transportista_nv" class="form-control" maxlength="100" value="${escapeHtml(seguimiento.transportista)}">
+                        </div>
+                        <div class="col-md-5 mb-2">
+                            <label>Número de seguimiento</label>
+                            <input id="numero_seguimiento_nv" class="form-control" maxlength="150" value="${escapeHtml(seguimiento.numero_seguimiento)}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label>Mensaje visible para el cliente</label>
+                            <textarea id="observacion_cliente_nv" class="form-control" rows="2">${escapeHtml(seguimiento.observacion_cliente)}</textarea>
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label>Observación interna</label>
+                            <textarea id="observacion_interna_nv" class="form-control" rows="2">${escapeHtml(seguimiento.observacion_interna)}</textarea>
+                        </div>
+                    </div>
+                    <div class="text-right mt-2">
+                        <button class="btn btn-primary" onclick="guardar_seguimiento_nota(${Number(nv.numero_carrito)})"><i class="fas fa-save"></i> Guardar seguimiento</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
                 <table class="table table-sm table-bordered table-hover mb-0">
                     <thead class="thead-light">
                         <tr>
@@ -112,10 +164,72 @@
                         </tr>
                     </tfoot>
                 </table>
+                </div>
             </div>
         </div>`;
 
         $('#resultado_nv').html(html);
+        actualizarVistaEstadoPago();
+    }
+
+    function etiquetaEstado(codigo) {
+        const etiquetas = {
+            recibido: 'Solicitud recibida', revision: 'En revisión', confirmado: 'Confirmado',
+            rechazado: 'Rechazado', cancelado: 'Cancelado', pendiente: 'Pendiente',
+            validando: 'En validación', pagado: 'Pagado', reembolsado: 'Reembolsado',
+            preparando: 'Preparando pedido', listo_retiro: 'Listo para retiro',
+            despachado: 'Despachado', entregado: 'Entregado', incidencia: 'Incidencia'
+        };
+        return etiquetas[codigo] || codigo;
+    }
+
+    function opcionesEstado(opciones, actual) {
+        return (opciones || []).map(codigo =>
+            `<option value="${codigo}" ${codigo === actual ? 'selected' : ''}>${etiquetaEstado(codigo)}</option>`
+        ).join('');
+    }
+
+    function actualizarVistaEstadoPago() {
+        const estado = $('#estado_pago_nv').val() || 'pendiente';
+        const estilos = {
+            pendiente: ['badge-warning', 'fa-clock', 'Pendiente de confirmación'],
+            validando: ['badge-info', 'fa-search-dollar', 'Comprobante o transacción en revisión'],
+            pagado: ['badge-success', 'fa-check-circle', 'Pago confirmado'],
+            rechazado: ['badge-danger', 'fa-times-circle', 'Pago rechazado'],
+            reembolsado: ['badge-secondary', 'fa-undo', 'Pago reembolsado']
+        };
+        const configuracion = estilos[estado] || estilos.pendiente;
+        $('#resumen_estado_pago_nv').html(`<span class="badge ${configuracion[0]} p-2"><i class="fas ${configuracion[1]} mr-1"></i>${configuracion[2]}</span>`);
+    }
+
+    function guardar_seguimiento_nota(numeroCarrito) {
+        $.ajaxSetup({ headers: { 'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content') } });
+        $.ajax({
+            type: 'POST',
+            url: '{{ url("ventas/nota_venta/actualizar_seguimiento") }}',
+            data: {
+                numero_carrito: numeroCarrito,
+                estado_pedido: $('#estado_pedido_nv').val(),
+                estado_pago: $('#estado_pago_nv').val(),
+                estado_entrega: $('#estado_entrega_nv').val(),
+                tipo_entrega: $('#tipo_entrega_nv').val(),
+                transportista: $('#transportista_nv').val().trim(),
+                numero_seguimiento: $('#numero_seguimiento_nv').val().trim(),
+                observacion_cliente: $('#observacion_cliente_nv').val().trim(),
+                observacion_interna: $('#observacion_interna_nv').val().trim()
+            },
+            beforeSend: function () {
+                Vue.swal({ title: 'Guardando seguimiento...', allowOutsideClick: false, showConfirmButton: false });
+            },
+            success: function (rpta) {
+                Vue.swal({ icon: 'success', text: rpta.mensaje, toast: true, position: 'top-end', showConfirmButton: false, timer: 3000 });
+                buscar_nota_venta();
+            },
+            error: function (xhr) {
+                const mensaje = xhr.responseJSON && xhr.responseJSON.mensaje ? xhr.responseJSON.mensaje : 'No se pudo actualizar el seguimiento.';
+                Vue.swal({ icon: 'error', title: 'No se pudo guardar', text: mensaje });
+            }
+        });
     }
 
     function confirmar_cambio_estado(numero_carrito, estado_actual) {

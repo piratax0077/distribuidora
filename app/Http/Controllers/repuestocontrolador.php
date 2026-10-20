@@ -555,7 +555,7 @@ class repuestocontrolador extends Controller
 
     public function guardar_repuesto_modificado(Request $item)
     {
-    
+
         $resp=-1;
         try{
             $repuesto=repuesto::find($item->idrep);
@@ -1049,7 +1049,7 @@ public function similares(Request $request)
         try {
             $quien=substr($dato,0,1);
             $codigo=substr($dato,1);
-       
+
         if($quien=='1')
             $repuestos=repuesto::where('repuestos.codigo_interno','like','%'.$codigo.'%')
                     ->join('users','repuestos.usuarios_id','users.id')
@@ -2404,7 +2404,7 @@ public function similares(Request $request)
 
     function guardarstock(Request $req){
         try {
-            
+
                 $stock = intval($req->stock);
                 $id_repuesto = $req->id_repuesto;
                 $id_responsable = $req->idresponsable;
@@ -2475,6 +2475,7 @@ public function similares(Request $request)
                             $modificacion_stock->stock = $stock;
                             $modificacion_stock->stock_anterior = $stock_anterior_preventa;
                         }
+                        // $modificacion_stock->id_local = $id_local;
                         $modificacion_stock->observacion = $observacion;
                         $modificacion_stock->id_responsable_stock = Auth::user()->id;
                         $modificacion_stock->save();
@@ -2484,7 +2485,7 @@ public function similares(Request $request)
                         return ["OK",$repuesto->stock_actual,$repuesto->id];
                    } catch (\Exception $e) {
                     //throw $th;
-                    return $e->getMessage();
+                    return ["error",$e->getMessage()];
                    }
 
                 }
@@ -2492,7 +2493,7 @@ public function similares(Request $request)
 
 
             } catch (\Exception $e) {
-                return $e->getMessage();
+                return ["error",$e->getMessage()];
             }
 
 

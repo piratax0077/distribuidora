@@ -11,6 +11,7 @@ use App\cliente_vendedor;
 use App\cliente_direcciones;
 use App\compra_transbank;
 use App\repuesto;
+use App\repuesto_valoracion;
 use App\repuestofoto;
 use Illuminate\Support\Facades\Validator;
 use App\despacho_domicilio;
@@ -23,6 +24,8 @@ use App\ciudades;
 use App\familia;
 use App\marcavehiculo;
 use App\carrito_virtual_detalle;
+use App\nota_venta_seguimiento;
+use App\nota_venta_estado_historial;
 use App\retiro_tienda;
 use App\repuesto_catalogo;
 use App\repuesto_carrito;
@@ -173,6 +176,14 @@ class api_controlador extends Controller
         return 0;
     }
 
+    public function marcasRepuestosCatalogo()
+    {
+        return marcarepuesto::select('id', 'marcarepuesto')
+            ->whereIn('id', repuesto::select('id_marca')->where('stock_actual', '>', 0))
+            ->orderBy('marcarepuesto', 'asc')
+            ->get();
+    }
+
     public function authenticate(Request $request)
     {
  
@@ -200,6 +211,25 @@ class api_controlador extends Controller
               return response()->json([
                   'message' => 'Login failed!',
               ], 401);
+          }
+
+          $usuario = Auth::user();
+          $cliente = $this->clienteWebAutenticado($usuario);
+
+          if ($cliente && intval($cliente->activo) === 2) {
+              try {
+                  JWTAuth::setToken($token)->invalidate();
+              } catch (\Throwable $e) {
+                  // El acceso igualmente se rechaza aunque el token no pueda invalidarse.
+              }
+
+              Auth::logout();
+
+              return response()->json([
+                  'message' => 'No puede ingresar porque su cuenta se encuentra morosa.' .
+                      ($cliente->descripcion_activo ? ' Motivo: ' . $cliente->descripcion_activo : ''),
+                  'code' => 'CLIENTE_MOROSO',
+              ], 403);
           }
       } catch (JWTException $e) {
           //Error chungo
@@ -351,6 +381,7 @@ class api_controlador extends Controller
 
     public function damerepuestos(){
         try {
+             $clienteWeb = $this->clienteWebAutenticado();
              $repuestos = repuesto::select('repuestos.*','paises.nombre_pais','marcarepuestos.marcarepuesto')
                                 // ->join('familias','repuestos.id_familia','familias.id')
                                 ->leftjoin('marcarepuestos','repuestos.id_marca','marcarepuestos.id')
@@ -416,6 +447,12 @@ class api_controlador extends Controller
         foreach($repuestos as $r){
             $foto = repuestofoto::where('id_repuestos','=',$r->id)->first();
             if($foto) $r->urlfoto = $foto->urlfoto; else $r->urlfoto = "fotozzz/sinfoto.png";
+            $precioWeb = $this->precioWebRepuesto($r, $clienteWeb);
+            $r->precio_original = $precioWeb['precio_original'];
+            $r->precio_final = $precioWeb['precio_final'];
+            $r->porcentaje_descuento_web = $precioWeb['porcentaje_descuento_web'];
+            $r->tiene_descuento_web = $precioWeb['tiene_descuento_web'];
+            $r->oferta = $precioWeb['oferta'];
         }
         return [$repuestos];
         } catch (\Exception $e) {
@@ -434,6 +471,18 @@ class api_controlador extends Controller
                                             ->join('paises', 'repuestos.id_pais', 'paises.id')
                                             ->where('repuestos.id',$id_repuesto)
                                             ->first();
+
+            if (!$repuesto_original) {
+                return response()->json(['message' => 'Repuesto no encontrado.'], 404);
+            }
+
+            $precioWeb = $this->precioWebRepuesto($repuesto_original, $this->clienteWebAutenticado());
+            $repuesto_original->precio_original = $precioWeb['precio_original'];
+            $repuesto_original->precio_final = $precioWeb['precio_final'];
+            $repuesto_original->porcentaje_descuento_web = $precioWeb['porcentaje_descuento_web'];
+            $repuesto_original->tiene_descuento_web = $precioWeb['tiene_descuento_web'];
+            $repuesto_original->oferta = $precioWeb['oferta'];
+            $repuesto_original->valoracion = $this->resumenValoracionRepuesto($id_repuesto, Auth::id());
 
                 
 
@@ -954,6 +1003,104 @@ class api_controlador extends Controller
         
     }
 
+    private function clienteWebAutenticado($usuario = null)
+    {
+        $usuario = $usuario ?: Auth::user();
+        if (!$usuario || (!$usuario->rut && !$usuario->email)) return null;
+
+        $rut = preg_replace('/[^0-9kK]/', '', (string) $usuario->rut);
+        return cliente_modelo::where(function ($query) use ($rut, $usuario) {
+            if ($rut !== '') {
+                $query->whereRaw(
+                    "UPPER(REPLACE(REPLACE(rut, '.', ''), '-', '')) = ?",
+                    [strtoupper($rut)]
+                );
+            }
+            if ($usuario->email) {
+                $method = $rut !== '' ? 'orWhereRaw' : 'whereRaw';
+                $query->{$method}('LOWER(email) = ?', [strtolower(trim($usuario->email))]);
+            }
+        })->first();
+    }
+
+    public function guardarValoracionRepuesto(Request $request, $id_repuesto)
+    {
+        $validator = Validator::make($request->all(), [
+            'valoracion' => 'required|integer|min:1|max:5',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 422);
+        }
+
+        if (!repuesto::where('id', $id_repuesto)->exists()) {
+            return response()->json(['message' => 'Repuesto no encontrado.'], 404);
+        }
+
+        $productoComprado = carrito_virtual_detalle::join(
+                'carrito_virtual',
+                'carrito_virtual_detalle.carrito_numero',
+                '=',
+                'carrito_virtual.numero_carrito'
+            )
+            ->where('carrito_virtual.usuario_id', Auth::id())
+            ->where('carrito_virtual.activo', 0)
+            ->where('carrito_virtual_detalle.repuesto_id', $id_repuesto)
+            ->exists();
+
+        if (!$productoComprado) {
+            return response()->json([
+                'message' => 'Sólo puedes valorar productos que hayas comprado desde Mis solicitudes.',
+            ], 403);
+        }
+
+        repuesto_valoracion::updateOrCreate(
+            ['repuesto_id' => $id_repuesto, 'usuario_id' => Auth::id()],
+            ['valoracion' => (int) $request->valoracion]
+        );
+
+        return response()->json([
+            'message' => 'Gracias. Tu valoración fue guardada.',
+            'valoracion' => $this->resumenValoracionRepuesto($id_repuesto, Auth::id()),
+        ]);
+    }
+
+    private function resumenValoracionRepuesto($id_repuesto, $usuario_id = null)
+    {
+        $consulta = repuesto_valoracion::where('repuesto_id', $id_repuesto);
+        $cantidad = (int) $consulta->count();
+        $promedio = $cantidad > 0 ? round((float) $consulta->avg('valoracion'), 1) : 0;
+        $valoracionUsuario = $usuario_id
+            ? (int) repuesto_valoracion::where('repuesto_id', $id_repuesto)->where('usuario_id', $usuario_id)->value('valoracion')
+            : 0;
+
+        return [
+            'promedio' => $promedio,
+            'cantidad' => $cantidad,
+            'valoracion_usuario' => $valoracionUsuario,
+        ];
+    }
+
+    private function precioWebRepuesto($repuesto, $cliente = null)
+    {
+        $oferta = oferta_pagina_web::where('id_repuesto', $repuesto->id)->first();
+        $precioOriginal = intval($repuesto->precio_venta);
+        $porcentaje = ($cliente && intval($cliente->descuento_web) === 1)
+            ? min(100, max(0, floatval($cliente->porcentaje_web)))
+            : 0;
+        $precioFinal = $porcentaje > 0
+            ? intval(round($precioOriginal * (1 - ($porcentaje / 100))))
+            : ($oferta ? intval($oferta->precio_actualizado) : $precioOriginal);
+
+        return [
+            'precio_original' => $precioOriginal,
+            'precio_final' => $precioFinal,
+            'porcentaje_descuento_web' => $porcentaje,
+            'tiene_descuento_web' => $porcentaje > 0,
+            'oferta' => $oferta ? 1 : 0,
+        ];
+    }
+
     public function agregar_carrito_virtual(Request $req){
        
       
@@ -1002,17 +1149,13 @@ class api_controlador extends Controller
             }else{
               
                 $repuesto = repuesto::find($idrep);
-                $existe_oferta = oferta_pagina_web::where('id_repuesto',$idrep)->get();
+                $precioWeb = $this->precioWebRepuesto($repuesto, $this->clienteWebAutenticado());
                 $detalle = new carrito_virtual_detalle;
            
                 $detalle->repuesto_id = $idrep;
                 $detalle->cantidad = $cantidad;
                 $detalle->carrito_numero = $carrito_existente->numero_carrito;
-                if(count($existe_oferta) > 0){
-                    $detalle->pu = intval($existe_oferta[0]->precio_actualizado); //Ya incluye el IVA, ESTE PRECIO DEBE PREDOMINAR
-                }else{
-                    $detalle->pu = intval($repuesto->precio_venta); //Ya incluye el IVA, ESTE PRECIO DEBE PREDOMINAR
-                }
+                $detalle->pu = $precioWeb['precio_final'];
                 
                 $detalle->pu_neto=round($detalle->pu/(1+Session::get('PARAM_IVA')),2);
                 $detalle->descuento_item = 0.00;
@@ -1040,6 +1183,66 @@ class api_controlador extends Controller
 
     }
 
+    public function actualizar_cantidad_carrito_seguro(Request $request){
+        $validator = Validator::make($request->all(), [
+            'numero_carrito' => 'required|integer',
+            'id_repuesto' => 'required|integer',
+            'nueva_cantidad' => 'required|integer|min:1',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 422);
+        }
+
+        $numeroCarrito = intval($request->numero_carrito);
+        $idRepuesto = intval($request->id_repuesto);
+        $nuevaCantidad = intval($request->nueva_cantidad);
+
+        $carrito = carrito_virtual::where('numero_carrito', $numeroCarrito)
+            ->where('usuario_id', Auth::id())
+            ->where('activo', 1)
+            ->first();
+
+        if (!$carrito) {
+            return response()->json([
+                'message' => 'El carrito activo no pertenece al usuario o ya fue cerrado.'
+            ], 404);
+        }
+
+        $detalle = carrito_virtual_detalle::where('carrito_numero', $carrito->numero_carrito)
+            ->where('repuesto_id', $idRepuesto)
+            ->first();
+
+        if (!$detalle) {
+            return response()->json([
+                'message' => 'El producto no pertenece al carrito activo.',
+                'numero_carrito' => $carrito->numero_carrito,
+                'id_repuesto' => $idRepuesto,
+            ], 404);
+        }
+
+        $repuesto = repuesto::find($idRepuesto);
+        if (!$repuesto) {
+            return response()->json(['message' => 'Producto no encontrado.'], 404);
+        }
+        if ($repuesto->stock_actual < $nuevaCantidad) {
+            return response()->json([
+                'message' => 'Stock insuficiente del repuesto seleccionado.',
+                'stock_disponible' => $repuesto->stock_actual,
+            ], 422);
+        }
+
+        $detalle->cantidad = $nuevaCantidad;
+        $detalle->subtotal_item = $nuevaCantidad * $detalle->pu;
+        $detalle->save();
+
+        return response()->json([
+            'message' => 'OK',
+            'numero_carrito' => $carrito->numero_carrito,
+            'id_repuesto' => $idRepuesto,
+            'cantidad' => $nuevaCantidad,
+        ]);
+    }
     public function actualizar_cantidad_carrito(Request $request){
     
         $numero_carrito = $request->numero_carrito;
@@ -1148,13 +1351,33 @@ class api_controlador extends Controller
                     
             // }
             
+            $clienteWeb = $this->clienteWebAutenticado();
             foreach($carrito_virtual as $r){
+                $precioWeb = $this->precioWebRepuesto($r, $clienteWeb);
+                $r->precio_original = $precioWeb['precio_original'];
+                $r->precio_venta = $precioWeb['precio_final'];
+                $r->precio_final = $precioWeb['precio_final'];
+                $r->porcentaje_descuento_web = $precioWeb['porcentaje_descuento_web'];
+                $r->tiene_descuento_web = $precioWeb['tiene_descuento_web'];
+                $r->oferta = $precioWeb['oferta'];
+                carrito_virtual_detalle::where('id', $r->carrito_id)->update([
+                    'pu' => $precioWeb['precio_final'],
+                    'pu_neto' => round($precioWeb['precio_final'] / (1 + Session::get('PARAM_IVA', 0.19)), 2),
+                    'subtotal_item' => $precioWeb['precio_final'] * $r->cantidad,
+                ]);
                 $foto = repuestofoto::where('id_repuestos','=',$r->id)->first();
                 if($foto) $r->urlfoto = $foto->urlfoto; else $r->urlfoto = "/fotozzz/sinfoto.png";
             }
                         //Devolvemos el token
                     return response()->json([
-                        'repuestos' => $carrito_virtual
+                        'repuestos' => $carrito_virtual,
+                        'descuento_web' => [
+                            'cliente_encontrado' => (bool) $clienteWeb,
+                            'rut_usuario' => Auth::user()->rut,
+                            'rut_cliente' => $clienteWeb ? $clienteWeb->rut : null,
+                            'activo' => $clienteWeb ? intval($clienteWeb->descuento_web) === 1 : false,
+                            'porcentaje' => $clienteWeb ? floatval($clienteWeb->porcentaje_web) : 0,
+                        ],
                     ]);
             
         }else{
@@ -2269,7 +2492,7 @@ class api_controlador extends Controller
     }
 
     public function buscador_completo($dato){
-      
+        $clienteWeb = $this->clienteWebAutenticado();
         $op = substr($dato, 0, 1);
         $desc = $dato;
        
@@ -2306,9 +2529,22 @@ class api_controlador extends Controller
             ->where('repuestos.stock_actual','>',0)
             ->get();
         }
+        if($repuestos->count() == 0){
+            $repuestos = repuesto::select('repuestos.*','marcarepuestos.marcarepuesto')
+            ->join('marcarepuestos','repuestos.id_marca','marcarepuestos.id')
+            ->where('marcarepuestos.marcarepuesto','like','%'.$buscado_original.'%')
+            ->where('repuestos.stock_actual','>',0)
+            ->get();
+        }
         foreach($repuestos as $r){
             $foto = repuestofoto::where('id_repuestos','=',$r->id)->first();
             if($foto) $r->urlfoto = $foto->urlfoto; else $r->urlfoto = "/fotozzz/sinfoto.png";
+            $precioWeb = $this->precioWebRepuesto($r, $clienteWeb);
+            $r->precio_original = $precioWeb['precio_original'];
+            $r->precio_final = $precioWeb['precio_final'];
+            $r->porcentaje_descuento_web = $precioWeb['porcentaje_descuento_web'];
+            $r->tiene_descuento_web = $precioWeb['tiene_descuento_web'];
+            $r->oferta = $precioWeb['oferta'];
         }
         return [$repuestos];
     
@@ -2978,21 +3214,68 @@ class api_controlador extends Controller
 
     public function detalle_venta($numero_carrito){
         try {
+            $token = request()->bearerToken() ?: request()->input('token');
+            if (!$token) {
+                return response()->json([
+                    'message' => 'Token de autorización requerido.',
+                    'status' => 'Authorization Token not found!',
+                ], 401);
+            }
+
+            $usuarioAutenticado = JWTAuth::setToken($token)->authenticate();
+            if (!$usuarioAutenticado) {
+                return response()->json(['message' => 'Usuario no encontrado.'], 401);
+            }
+
+            $clienteAutenticado = $this->clienteWebAutenticado($usuarioAutenticado);
+            if ($clienteAutenticado && intval($clienteAutenticado->activo) === 2) {
+                return response()->json([
+                    'message' => 'No puede ingresar porque su cuenta se encuentra morosa.' .
+                        ($clienteAutenticado->descripcion_activo ? ' Motivo: ' . $clienteAutenticado->descripcion_activo : ''),
+                    'code' => 'CLIENTE_MOROSO',
+                ], 403);
+            }
+
+            $carrito = carrito_virtual::where('numero_carrito', $numero_carrito)
+                ->where('usuario_id', $usuarioAutenticado->id)
+                ->first();
+            if (!$carrito) {
+                return response()->json(['message' => 'Pedido no encontrado.'], 404);
+            }
             $carrito_virtual = carrito_virtual_detalle::select('carrito_virtual_detalle.*','repuestos.descripcion','repuestos.id','repuestos.precio_venta','repuestos.codigo_interno','marcarepuestos.marcarepuesto','repuestos.stock_actual')
                                                 ->join('repuestos','carrito_virtual_detalle.repuesto_id','repuestos.id')       
                                                 ->join('marcarepuestos','repuestos.id_marca','marcarepuestos.id')     
                                                 ->where('carrito_virtual_detalle.carrito_numero',$numero_carrito)
                                                 ->get();
             $repuestos_= [];
+            $clienteWeb = $this->clienteWebAutenticado($usuarioAutenticado);
             foreach($carrito_virtual as $repuesto){
+                   $precioWeb = $this->precioWebRepuesto($repuesto, $clienteWeb);
+                   $repuesto->precio_original = $precioWeb['precio_original'];
+                   $repuesto->precio_final = intval($repuesto->pu);
+                   $repuesto->precio_venta = intval($repuesto->pu);
+                   $repuesto->porcentaje_descuento_web = $precioWeb['precio_original'] > 0
+                       ? round((1 - (intval($repuesto->pu) / $precioWeb['precio_original'])) * 100, 2)
+                       : 0;
+                   $repuesto->tiene_descuento_web = intval($repuesto->pu) < $precioWeb['precio_original'];
+                   $repuesto->valoracion = $this->resumenValoracionRepuesto($repuesto->id, $usuarioAutenticado->id);
                    $foto = repuestofoto::where('id_repuestos', $repuesto->id)->first();
                    if($foto) $repuesto->urlfoto = $foto->urlfoto; 
             }
                                 
             
             return $carrito_virtual;
-        } catch (\Exception $e) {
-            return $e->getMessage();
+        } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
+            return response()->json(['message' => 'La sesión ha expirado.', 'status' => 'Token is Expired'], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {
+            return response()->json(['message' => 'El token de sesión no es válido.', 'status' => 'Token is Invalid'], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
+            return response()->json(['message' => 'No fue posible validar la sesión.'], 401);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'No se pudo recuperar el detalle del pedido.',
+                'error' => $e->getMessage(),
+            ], 500);
         }
         
     }
@@ -3086,7 +3369,12 @@ class api_controlador extends Controller
     public function dame_solicitudes_compra(){
         try {
             $usuario_id = Auth::user()->id;
+            $clienteWeb = $this->clienteWebAutenticado();
             $solicitudes = carrito_virtual::where('usuario_id',$usuario_id)->where('activo',0)->get();
+            $seguimientos = nota_venta_seguimiento::where('usuario_web_id', $usuario_id)
+                ->orderBy('numero_nota_venta')
+                ->get()
+                ->groupBy('numero_solicitud_web');
             foreach($solicitudes as $solicitud){
                 $solicitud->detalle = carrito_virtual_detalle::select('carrito_virtual_detalle.*','repuestos.descripcion','repuestos.id','repuestos.precio_venta','repuestos.codigo_interno','marcarepuestos.marcarepuesto','repuestos.stock_actual')
                                                 ->join('repuestos','carrito_virtual_detalle.repuesto_id','repuestos.id')       
@@ -3094,12 +3382,22 @@ class api_controlador extends Controller
                                                 ->where('carrito_virtual_detalle.carrito_numero',$solicitud->numero_carrito)
                                                 ->get();
                 $total = 0;
-                $iva = 0;
                 foreach($solicitud->detalle as $repuesto){
-                    $total += $repuesto->precio_venta * $repuesto->cantidad;
-                    $iva += ($repuesto->precio_venta * $repuesto->cantidad) * 0.19;
+                    $total += $repuesto->pu * $repuesto->cantidad;
+                    $precioWeb = $this->precioWebRepuesto($repuesto, $clienteWeb);
+                    $repuesto->precio_original = $precioWeb['precio_original'];
+                    $repuesto->precio_venta = $precioWeb['precio_final'];
+                    $repuesto->precio_final = $precioWeb['precio_final'];
+                    $repuesto->porcentaje_descuento_web = $precioWeb['porcentaje_descuento_web'];
+                    $repuesto->tiene_descuento_web = $precioWeb['tiene_descuento_web'];
                 }
-                $solicitud->monto_total = $total + $iva;
+                $solicitud->monto_total = $total;
+                $seguimientoSolicitud = $seguimientos->get($solicitud->numero_carrito, collect());
+                $solicitud->seguimientos = $seguimientoSolicitud->map(function ($seguimiento) {
+                    return $this->formatearSeguimientoNotaVenta($seguimiento);
+                })->values();
+                $solicitud->estado_general = $this->estadoGeneralSolicitud($seguimientoSolicitud);
+                $solicitud->estado_pago = $this->estadoPagoSolicitud($seguimientoSolicitud);
             }
             $compras = compra_transbank::where('usuario_id',$usuario_id)->get();
             
@@ -3115,10 +3413,16 @@ class api_controlador extends Controller
         //$entrega = retiro_tienda::where('numero_carrito',$numero_carrito)->first();
         //$despacho = despacho_domicilio::where('numero_carrito',$numero_carrito)->first();
 
+        $usuarioAutenticado = JWTAuth::parseToken()->authenticate();
         $carrito = carrito_virtual::select('carrito_virtual.*','cliente_direcciones.direccion','cliente_direcciones.id_region','cliente_direcciones.id_comuna')
         ->where('numero_carrito',$numero_carrito)
+        ->where('carrito_virtual.usuario_id', $usuarioAutenticado->id)
         ->join('cliente_direcciones', 'carrito_virtual.id_direccion', '=', 'cliente_direcciones.id')
         ->first();
+
+        if (!$carrito) {
+            return response()->json(['message' => 'Solicitud no encontrada.'], 404);
+        }
 
         $carrito->region = regiones::find($carrito->id_region)->nombre;
         $carrito->comuna = ciudades::find($carrito->id_comuna)->nombre;
@@ -3144,7 +3448,113 @@ class api_controlador extends Controller
 
         $carrito->vendedor = $vendedor;
 
+        $seguimientos = nota_venta_seguimiento::where('numero_solicitud_web', $numero_carrito)
+            ->where('usuario_web_id', $usuarioAutenticado->id)
+            ->with('historial')
+            ->orderBy('numero_nota_venta')
+            ->get();
+        $carrito->seguimientos = $seguimientos->map(function ($seguimiento) {
+            return $this->formatearSeguimientoNotaVenta($seguimiento, true);
+        })->values();
+        $carrito->estado_general = $this->estadoGeneralSolicitud($seguimientos);
+
         return $carrito;
+    }
+
+    private function estadoGeneralSolicitud($seguimientos)
+    {
+        if ($seguimientos->isEmpty()) {
+            return ['codigo' => 'recibido', 'nombre' => 'Solicitud recibida', 'color' => 'primary', 'porcentaje' => 20];
+        }
+
+        $prioridad = ['rechazado', 'cancelado', 'incidencia', 'recibido', 'revision', 'confirmado', 'pendiente', 'preparando', 'listo_retiro', 'despachado', 'entregado'];
+        $codigos = $seguimientos->map(function ($item) { return $item->estadoGeneral(); });
+        $codigo = 'entregado';
+        foreach ($prioridad as $candidato) {
+            if ($codigos->contains($candidato)) {
+                $codigo = $candidato;
+                break;
+            }
+        }
+
+        return $this->metadataEstadoNotaVenta($codigo);
+    }
+
+    private function metadataEstadoNotaVenta($codigo)
+    {
+        $estados = [
+            'recibido' => ['nombre' => 'Solicitud recibida', 'color' => 'primary', 'porcentaje' => 20],
+            'revision' => ['nombre' => 'En revisión', 'color' => 'warning', 'porcentaje' => 30],
+            'confirmado' => ['nombre' => 'Pedido confirmado', 'color' => 'info', 'porcentaje' => 40],
+            'pendiente' => ['nombre' => 'Pedido confirmado', 'color' => 'info', 'porcentaje' => 40],
+            'preparando' => ['nombre' => 'Preparando pedido', 'color' => 'warning', 'porcentaje' => 60],
+            'listo_retiro' => ['nombre' => 'Listo para retiro', 'color' => 'info', 'porcentaje' => 80],
+            'despachado' => ['nombre' => 'Pedido despachado', 'color' => 'info', 'porcentaje' => 80],
+            'entregado' => ['nombre' => 'Pedido entregado', 'color' => 'success', 'porcentaje' => 100],
+            'rechazado' => ['nombre' => 'Solicitud rechazada', 'color' => 'danger', 'porcentaje' => 0],
+            'cancelado' => ['nombre' => 'Pedido cancelado', 'color' => 'secondary', 'porcentaje' => 0],
+            'incidencia' => ['nombre' => 'Incidencia en la entrega', 'color' => 'danger', 'porcentaje' => 60],
+        ];
+        $meta = isset($estados[$codigo]) ? $estados[$codigo] : $estados['recibido'];
+        return array_merge(['codigo' => $codigo], $meta);
+    }
+
+    private function estadoPagoSolicitud($seguimientos)
+    {
+        if ($seguimientos->isEmpty()) {
+            return $this->metadataEstadoPago('pendiente');
+        }
+
+        $estados = $seguimientos->pluck('estado_pago');
+        foreach (['rechazado', 'validando', 'pendiente', 'reembolsado'] as $estado) {
+            if ($estados->contains($estado)) {
+                return $this->metadataEstadoPago($estado);
+            }
+        }
+
+        return $this->metadataEstadoPago('pagado');
+    }
+
+    private function metadataEstadoPago($codigo)
+    {
+        $estados = [
+            'pendiente' => ['nombre' => 'Pago pendiente', 'color' => 'warning', 'icono' => 'fa-clock'],
+            'validando' => ['nombre' => 'Pago en validación', 'color' => 'info', 'icono' => 'fa-magnifying-glass-dollar'],
+            'pagado' => ['nombre' => 'Pago confirmado', 'color' => 'success', 'icono' => 'fa-circle-check'],
+            'rechazado' => ['nombre' => 'Pago rechazado', 'color' => 'danger', 'icono' => 'fa-circle-xmark'],
+            'reembolsado' => ['nombre' => 'Pago reembolsado', 'color' => 'secondary', 'icono' => 'fa-rotate-left'],
+        ];
+
+        return array_merge(['codigo' => $codigo], isset($estados[$codigo]) ? $estados[$codigo] : $estados['pendiente']);
+    }
+
+    private function formatearSeguimientoNotaVenta($seguimiento, $conHistorial = false)
+    {
+        $data = [
+            'numero_nota_venta' => $seguimiento->numero_nota_venta,
+            'estado_pedido' => $seguimiento->estado_pedido,
+            'estado_pago' => $seguimiento->estado_pago,
+            'estado_pago_detalle' => $this->metadataEstadoPago($seguimiento->estado_pago),
+            'estado_entrega' => $seguimiento->estado_entrega,
+            'estado_general' => $this->metadataEstadoNotaVenta($seguimiento->estadoGeneral()),
+            'tipo_entrega' => $seguimiento->tipo_entrega,
+            'transportista' => $seguimiento->transportista,
+            'numero_seguimiento' => $seguimiento->numero_seguimiento,
+            'observacion_cliente' => $seguimiento->observacion_cliente,
+            'updated_at' => $seguimiento->updated_at,
+        ];
+        if ($conHistorial) {
+            $data['historial'] = $seguimiento->historial->map(function ($item) {
+                return [
+                    'tipo_estado' => $item->tipo_estado,
+                    'estado_anterior' => $item->estado_anterior,
+                    'estado_nuevo' => $item->estado_nuevo,
+                    'observacion' => $item->observacion,
+                    'created_at' => $item->created_at,
+                ];
+            })->values();
+        }
+        return $data;
     }
 
     public function ordenar_buscador($id, $tag){
@@ -4821,6 +5231,45 @@ public function generar_xml_online(Request $r)
 
     public function enviar_nota_venta(Request $req){
         try {
+            $validator = Validator::make($req->all(), [
+                'numero_carrito' => 'required|integer',
+                'id_direccion' => 'required|integer',
+                'observaciones' => 'nullable|string|max:2000',
+                'comprobante_pago' => 'nullable|file|max:5120|mimes:jpg,jpeg,png,pdf',
+            ]);
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'ERROR',
+                    'message' => $validator->errors()->first(),
+                ], 422);
+            }
+
+            $usuario = Auth::user();
+            $nota_venta = carrito_virtual::where('numero_carrito', $req->numero_carrito)
+                ->where('usuario_id', $usuario->id)
+                ->where('activo', 1)
+                ->first();
+            if (!$nota_venta) {
+                return response()->json([
+                    'status' => 'ERROR',
+                    'message' => 'El carrito no existe, no pertenece al usuario o ya fue procesado.',
+                ], 409);
+            }
+
+            $cliente_temp = $usuario;
+            $rut_sin_guion = str_replace('-', '', $cliente_temp->rut);
+            $cliente = cliente_modelo::where('rut','like', '%'.$rut_sin_guion.'%')->first();
+            if (!$cliente) {
+                return response()->json(['status' => 'ERROR', 'message' => 'Cliente no encontrado.'], 422);
+            }
+
+            $direccion = cliente_direcciones::where('id', $req->id_direccion)
+                ->where('id_cliente', $cliente->id)
+                ->first();
+            if (!$direccion) {
+                return response()->json(['status' => 'ERROR', 'message' => 'La direccion no pertenece al cliente.'], 422);
+            }
+
             // Validar y procesar la imagen del comprobante antes de procesar el carrito
             $image_path = null;
             if($req->hasFile('comprobante_pago')){
@@ -4856,18 +5305,37 @@ public function generar_xml_online(Request $r)
                 }
             }
         
-            $cliente_temp = User::find($req->id_cliente);
-            $rut_sin_guion = str_replace('-', '', $cliente_temp->rut);
-            $cliente = cliente_modelo::where('rut','like', '%'.$rut_sin_guion.'%')->first();
-          
             // buscamos al vendedor asociado al cliente
             $cliente_vendedor = cliente_vendedor::where('id_cliente', $cliente->id)->first();
+            if (!$cliente_vendedor) {
+                return response()->json(['status' => 'ERROR', 'message' => 'El cliente no tiene vendedor asociado.'], 422);
+            }
             $vendedor = User::find($cliente_vendedor->id_vendedor);
-         
-            $nota_venta = carrito_virtual::where('numero_carrito',$req->numero_carrito)->first();
+            if (!$vendedor) {
+                return response()->json(['status' => 'ERROR', 'message' => 'Vendedor asociado no encontrado.'], 422);
+            }
+
             $nota_venta->id_direccion = $req->id_direccion;
             $nota_venta->save();
             
+            $detalle = carrito_virtual_detalle::where('carrito_numero', $nota_venta->numero_carrito)->get();
+            if ($detalle->isEmpty()) {
+                return response()->json(['status' => 'ERROR', 'message' => 'El carrito no contiene productos.'], 422);
+            }
+
+            // Recalcular en servidor justo antes de emitir la nota. De esta forma el
+            // valor cobrado no depende del precio que haya mostrado o enviado el navegador.
+            foreach ($detalle as $itemDetalle) {
+                $repuestoActual = repuesto::find($itemDetalle->repuesto_id);
+                if (!$repuestoActual) {
+                    return response()->json(['status' => 'ERROR', 'message' => 'Uno de los productos ya no existe.'], 422);
+                }
+                $precioWeb = $this->precioWebRepuesto($repuestoActual, $cliente);
+                $itemDetalle->pu = $precioWeb['precio_final'];
+                $itemDetalle->pu_neto = round($precioWeb['precio_final'] / (1 + Session::get('PARAM_IVA', 0.19)), 2);
+                $itemDetalle->subtotal_item = $precioWeb['precio_final'] * $itemDetalle->cantidad;
+                $itemDetalle->save();
+            }
             $detalle = carrito_virtual_detalle::where('carrito_numero', $nota_venta->numero_carrito)->get();
     
             // Dividir el detalle en lotes de 20 productos
@@ -4935,6 +5403,38 @@ public function generar_xml_online(Request $r)
                 // Guardar el carrito_id generado para enviar correos después
                 if($ultimo_ct) {
                     $carritos_generados[] = $ultimo_ct->carrito_id;
+                    $seguimiento = nota_venta_seguimiento::firstOrCreate(
+                        ['numero_nota_venta' => $ultimo_ct->numero_carrito],
+                        [
+                            'numero_solicitud_web' => $nota_venta->numero_carrito,
+                            'usuario_web_id' => $usuario->id,
+                            'cliente_id' => $cliente->id,
+                            'estado_pedido' => 'recibido',
+                            'estado_pago' => $image_path ? 'validando' : 'pendiente',
+                            'estado_entrega' => 'pendiente',
+                            'tipo_entrega' => 'domicilio',
+                            'observacion_cliente' => $req->observaciones,
+                        ]
+                    );
+
+                    // firstOrCreate no aplica los valores del segundo arreglo cuando el
+                    // seguimiento ya existe. Aseguramos siempre el vinculo con la
+                    // solicitud y el usuario web sin sobrescribir sus estados actuales.
+                    $seguimiento->numero_solicitud_web = $nota_venta->numero_carrito;
+                    $seguimiento->usuario_web_id = $usuario->id;
+                    $seguimiento->cliente_id = $cliente->id;
+                    $seguimiento->save();
+
+                    if ($seguimiento->wasRecentlyCreated) {
+                        nota_venta_estado_historial::create([
+                            'nota_venta_seguimiento_id' => $seguimiento->id,
+                            'tipo_estado' => 'pedido',
+                            'estado_anterior' => null,
+                            'estado_nuevo' => 'recibido',
+                            'observacion' => 'Solicitud recibida desde el sitio web.',
+                            'usuario_id' => $usuario->id,
+                        ]);
+                    }
                 }
             }
             
@@ -4969,6 +5469,11 @@ public function generar_xml_online(Request $r)
             }
             
             // Retornar información sobre las notas de venta generadas
+            carrito_virtual_detalle::where('carrito_numero', $nota_venta->numero_carrito)
+                ->update(['estado' => 0]);
+            $nota_venta->activo = 0;
+            $nota_venta->save();
+
             if(count($carritos_generados) > 1) {
                 return json_encode([
                     'status' => 'OK',
@@ -6430,10 +6935,132 @@ public function generar_xml_online(Request $r)
         return 'OK';
     }
 
+    public function repetir_carrito(Request $request){
+        try {
+            $token = $request->bearerToken() ?: $request->input('token');
+            if (!$token) {
+                return response()->json(['message' => 'Token de autorización requerido.'], 401);
+            }
+            $usuarioAutenticado = JWTAuth::setToken($token)->authenticate();
+            if (!$usuarioAutenticado) {
+                return response()->json(['message' => 'Token inválido o usuario no encontrado.'], 401);
+            }
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Sesión inválida o vencida.'], 401);
+        }
+        $validator = Validator::make($request->all(), [
+            'productos' => 'required|array|min:1',
+            'productos.*.id' => 'required|integer',
+            'productos.*.cantidad' => 'required|integer|min:1',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 422);
+        }
+
+        try {
+            $resultado = \DB::transaction(function () use ($request, $usuarioAutenticado) {
+                $usuarioId = $usuarioAutenticado->id;
+                $clienteWeb = $this->clienteWebAutenticado($usuarioAutenticado);
+                $carritosActivos = carrito_virtual::where('usuario_id', $usuarioId)
+                    ->where('activo', 1)
+                    ->lockForUpdate()
+                    ->get();
+
+                foreach ($carritosActivos as $carritoAnterior) {
+                    carrito_virtual_detalle::where('carrito_numero', $carritoAnterior->numero_carrito)
+                        ->update(['estado' => 0]);
+                    $carritoAnterior->activo = 0;
+                    $carritoAnterior->save();
+                }
+
+                $correlativo = correlativo::where('id', 11)->lockForUpdate()->firstOrFail();
+                $nuevoCarrito = new carrito_virtual;
+                $nuevoCarrito->fecha_emision = Carbon::today()->toDateString();
+                $nuevoCarrito->numero_carrito = intval($correlativo->correlativo) + 1;
+                $nuevoCarrito->activo = 1;
+                $nuevoCarrito->usuario_id = $usuarioId;
+                $nuevoCarrito->save();
+
+                $correlativo->correlativo = $nuevoCarrito->numero_carrito;
+                $correlativo->save();
+
+                $agregados = [];
+                $omitidos = [];
+                $iva = Session::get('PARAM_IVA', 0.19);
+
+                foreach ($request->productos as $productoSolicitado) {
+                    $repuesto = repuesto::where('id', $productoSolicitado['id'])->lockForUpdate()->first();
+                    $cantidad = intval($productoSolicitado['cantidad']);
+
+                    if (!$repuesto || !$repuesto->activo) {
+                        $omitidos[] = ['id' => $productoSolicitado['id'], 'motivo' => 'Producto no disponible'];
+                        continue;
+                    }
+                    if ($repuesto->stock_actual < $cantidad) {
+                        $omitidos[] = ['id' => $repuesto->id, 'motivo' => 'Stock disponible: '.$repuesto->stock_actual];
+                        continue;
+                    }
+
+                    $precioWeb = $this->precioWebRepuesto($repuesto, $clienteWeb);
+                    $precio = $precioWeb['precio_final'];
+                    $detalle = new carrito_virtual_detalle;
+                    $detalle->repuesto_id = $repuesto->id;
+                    $detalle->cantidad = $cantidad;
+                    $detalle->carrito_numero = $nuevoCarrito->numero_carrito;
+                    $detalle->pu = $precio;
+                    $detalle->pu_neto = round($precio / (1 + $iva), 2);
+                    $detalle->descuento_item = 0.00;
+                    $detalle->subtotal_item = $cantidad * $precio;
+                    $detalle->save();
+                    $agregados[] = [
+                        'id' => $repuesto->id,
+                        'cantidad' => $cantidad,
+                        'precio_original' => $precioWeb['precio_original'],
+                        'precio_final' => $precioWeb['precio_final'],
+                        'porcentaje_descuento_web' => $precioWeb['porcentaje_descuento_web'],
+                    ];
+                }
+
+                if (count($agregados) === 0) {
+                    throw new \RuntimeException('Ningún producto seleccionado pudo agregarse al carrito.');
+                }
+
+                return [
+                    'numero_carrito' => $nuevoCarrito->numero_carrito,
+                    'agregados' => $agregados,
+                    'omitidos' => $omitidos,
+                ];
+            });
+
+            return response()->json([
+                'message' => 'OK',
+                'numero_carrito' => $resultado['numero_carrito'],
+                'version' => 'atomic-v2',
+                'agregados' => $resultado['agregados'],
+                'omitidos' => $resultado['omitidos'],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
     public function limpiar_carrito(Request $request){
         $numero_carrito = $request->numero_carrito;
-        $carrito = carrito_virtual::where('numero_carrito',$numero_carrito)->first();
-        $detalle = carrito_virtual_detalle::where('carrito_numero',$carrito->id)->get();
+        $carrito = carrito_virtual::where('numero_carrito', $numero_carrito)
+            ->where('usuario_id', Auth::id())
+            ->where('activo', 1)
+            ->first();
+
+        if (!$carrito) {
+            return response()->json([
+                'message' => 'Carrito activo no encontrado.'
+            ], 404);
+        }
+
+        $detalle = carrito_virtual_detalle::where('carrito_numero', $carrito->numero_carrito)->get();
         foreach ($detalle as $item) {
             $item->estado = 0;
             $item->save();

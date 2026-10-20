@@ -130,348 +130,449 @@ class sii_controlador extends Controller
         // entregar estado
         $rpta=(array)$xml->xpath('/SII:RESPUESTA/SII:RESP_HDR')[0];
         $estado=['estado'=>$rpta['ESTADO'],'mensaje'=>$rpta['GLOSA_ESTADO']];
-        
+
         return json_encode($estado);
     }
 
 
     public function ver_estadoUP($info)
     {
-         //0101320258
-        list($tipoDTE,$TrackID)=explode("&",$info);
-        list($rut,$dv)=explode("-",str_replace(".","",Session::get('PARAM_RUT')));
-        $estado=['estado'=>'ERROR','mensaje'=>'No se procesó...'];
+        list($tipoDTE, $TrackID) = explode("&", $info);
+
+        list($rut, $dv) = explode("-", str_replace(".", "", Session::get('PARAM_RUT')));
+
+        $res = 'ERROR';
+        $est = 'No se procesó...';
 
         try {
-            if($tipoDTE=='39'){
-                
-                //$params=['rut'=>$rut,'dv'=>$dv,'trackid'=>$TrackID];
-                $Firma=ClsSii::dame_firma();
-                $tok=Auto_boletas::getToken($Firma);
+            if ($tipoDTE == '39') {
+                // BOLETAS
+                $Firma = ClsSii::dame_firma();
+                $tok = Auto_boletas::getToken($Firma);
 
-                if($tok['estado']=='OK'){
-                    $token=$tok['token'];
-                }else{
+                if (!isset($tok['estado']) || $tok['estado'] != 'OK') {
                     return json_encode($tok);
                 }
 
-                $params=$rut."-".$dv."-".$TrackID;
-                
-                $rs=Sii_boletas::request_json('GET','/boleta.electronica.envio',$params,false,$token);
-                
-                $est=$rs['estado'];
-                
-                if($est!='EPR'){
-                    if($est == 'SOK'){
-                        $res = "RECIBIDO";
-                    }else if($est=='REC'){
-                        $res="RECIBIDO";
-                    }else{
-                        $res="ERROR";
-                    }
+                $token = $tok['token'];
+                $params = $rut . "-" . $dv . "-" . $TrackID;
 
-                    
-                        // buscamos el trackid en la boleta
-                        $dte = new dte_rechazados;
-                        $dte->tipo_doc = $tipoDTE;
-                        $dte->fecha_emision = Carbon::today()->toDateString();
-                        $dte->folio_doc = 33;
-                        $dte->id_cliente = Auth::user()->id;
-                        
-                        $dte->track_id = intval($TrackID);
-                        $dte->estado = $est;
-                     
-                        //$dte->save();
-                }else{
-                    
-                    $aceptado=$rs['estadistica'][0]['aceptados'];
-                    $rechazado=$rs['estadistica'][0]['rechazados'];
-                    $reparo=$rs['estadistica'][0]['reparos'];
-                    if($aceptado==1) $res="ACEPTADO";
-                    if($rechazado==1) $res="RECHAZADO";
-                    if($reparo==1) $res="REPARO";
-                    if($res!="ACEPTADO"){
-                        if(isset($rs['detalle_rep_rech'])){
-                            $est.=": ".$rs['detalle_rep_rech'][0]['descripcion'].". ";
-                            $est.=$rs['detalle_rep_rech'][0]['error'][0]['descripcion'];
-                        }else{
-                            $est.=": Envío No Aceptado";
-                        }
-                    }else{
-                        $est.=": Envío Procesado";
-                    }
-                }
-                $estado=['estado'=>$res,'mensaje'=>$est];
-            }else{ // fin boleta 39
-                //otros documentos
-                $Token=ClsSii::dame_token();
-                $resultado=ClsSii::dame_estado_dteUP($TrackID,$rut,$dv,$Token);
-                
-                //echo $resultado->asXML(); //para ver el xml en la consola del navegador
-                
-                if(gettype($resultado)=="object")
-                {
-                    $est=strval($resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/ESTADO')[0]);
-                    
-                    if($est!="EPR")
-                    {
+                $rs = Sii_boletas::request_json(
+                    'GET',
+                    '/boleta.electronica.envio',
+                    $params,
+                    false,
+                    $token
+                );
 
-                        $msg="SII aún procesando...espere";
-                        $res="EN REVISION";
-                        if($est=='RSC'){
-                            $msg='Rechazado por Error en Schema';
-                            $res="RECHAZADO";
-                        }
-                        if($est=='RFR'){
-                            $msg='Rechazado por Error en Firma';
-                            $res="RECHAZADO";
-                        }
-                        if($est=='RCT'){
-                            $msg='Rechazado por Error en Carátula';
-                            $res="RECHAZADO";
+                $codigoEstado = isset($rs['estado']) ? $rs['estado'] : null;
+
+                switch ($codigoEstado) {
+                    case 'EPR':
+                        $aceptado = isset($rs['estadistica'][0]['aceptados'])
+                            ? intval($rs['estadistica'][0]['aceptados'])
+                            : 0;
+
+                        $rechazado = isset($rs['estadistica'][0]['rechazados'])
+                            ? intval($rs['estadistica'][0]['rechazados'])
+                            : 0;
+
+                        $reparo = isset($rs['estadistica'][0]['reparos'])
+                            ? intval($rs['estadistica'][0]['reparos'])
+                            : 0;
+
+                        if ($aceptado > 0) {
+                            $res = 'ACEPTADO';
+                            $est = 'EPR: Envío Procesado';
+                        } elseif ($rechazado > 0) {
+                            $res = 'RECHAZADO';
+                            $est = 'EPR: Envío Rechazado';
+                        } elseif ($reparo > 0) {
+                            $res = 'REPARO';
+                            $est = 'EPR: Envío con reparos';
+                        } else {
+                            $res = 'EPR';
+                            $est = 'Envío procesado sin estadística concluyente';
                         }
 
-                        if($est=='SOK'){
-                            $msg='Esquema XML OK, espere...';
+                        if ($res != 'ACEPTADO' && isset($rs['detalle_rep_rech'][0])) {
+                            $detalle = $rs['detalle_rep_rech'][0];
+
+                            if (isset($detalle['descripcion'])) {
+                                $est .= ': ' . $detalle['descripcion'];
+                            }
+
+                            if (isset($detalle['error'][0]['descripcion'])) {
+                                $est .= '. ' . $detalle['error'][0]['descripcion'];
+                            }
                         }
+                        break;
 
-                        if($est=='CRT'){
-                            $msg='Carátula OK, espere...';
-                        }
+                    case 'SOK':
+                    case 'REC':
+                        $res = 'RECIBIDO';
+                        $est = $codigoEstado . ': Recibido por el SII';
+                        break;
 
-                        if(is_numeric($est)){
-                            $res="SII MUY OCUPADO!! espere...";
-                            $msg=$est."Reintente Ver Estado.";
-                        }
+                    case null:
+                        $res = 'ERROR';
+                        $est = 'Respuesta del SII sin código de estado';
+                        break;
 
-                        $est=$msg;
-
-                        
-
-                        // buscamos el trackid en la boleta
-                        $dte = new dte_rechazados;
-                        $dte->tipo_doc = 'fa';
-                        $dte->fecha_emision = Carbon::today()->toDateString();
-                        $dte->folio_doc = 39;
-                        $dte->id_cliente = 4;
-                        $dte->track_id = $TrackID;
-                        $dte->estado = $est;
-                        //$dte->save();
-                    }else{
-                        
-                        $est.=": ".$resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/GLOSA')[0];
-                        //$est.="Informados: ".$resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/INFORMADOS')[0]."\n";
-                        $aceptado=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/ACEPTADOS')[0]);
-                        $rechazado=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/RECHAZADOS')[0]);
-                        $reparo=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/REPAROS')[0]);
-                        
-                        if($aceptado==1) $res="ACEPTADO";
-                        if($rechazado==1) $res="RECHAZADO";
-                        if($reparo==1) $res="REPARO";
-                    }
+                    default:
+                        $res = 'ERROR';
+                        $est = 'Estado SII boleta no contemplado: ' . $codigoEstado;
+                        break;
                 }
 
-                if(gettype($resultado)=="string")
-                {
-                    //$estado="sii_controlador: Llegó un string de ".strlen($resultado)." caracteres.\n valor:".$resultado;
-                    $estado=['estado'=>'ERROR','mensaje'=>'SII no responde.'];
-                    $estado=json_encode($estado);
-                }
-            }//fin de factura dte 33 o 61
+                \Log::info('CONSULTA ESTADO SII BOLETA', [
+                    'tipo_dte' => $tipoDTE,
+                    'trackid' => $TrackID,
+                    'respuesta' => $rs,
+                    'estado_interpretado' => $res,
+                    'mensaje_interpretado' => $est,
+                ]);
+            } else {
+                // FACTURAS, NOTAS DE CRÉDITO, NOTAS DE DÉBITO Y GUÍAS
+                $Token = ClsSii::dame_token();
 
-            $estado=['estado'=>$res,'mensaje'=>$est];
-            $estado=json_encode($estado);
-            //actualizar estado
-            switch ($tipoDTE){
+                if (!$Token) {
+                    $res = 'ERROR';
+                    $est = 'No se pudo obtener Token SII';
+                } else {
+                    $resultado = ClsSii::dame_estado_dteUP(
+                        $TrackID,
+                        $rut,
+                        $dv,
+                        $Token
+                    );
+
+                    if (is_object($resultado)) {
+                        // Guardamos la respuesta cruda para poder diagnosticar estados SII
+                        \Log::info('RESPUESTA SII QUERYESTUP', [
+                            'tipo_dte' => $tipoDTE,
+                            'trackid' => $TrackID,
+                            'xml' => method_exists($resultado, 'asXML')
+                                ? $resultado->asXML()
+                                : null,
+                        ]);
+
+                        $estadoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/ESTADO');
+                        $glosaNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/GLOSA');
+
+                        $codigoEstado = isset($estadoNodo[0]) ? strval($estadoNodo[0]) : '';
+                        $glosa = isset($glosaNodo[0]) ? strval($glosaNodo[0]) : '';
+
+                        switch ($codigoEstado) {
+                            case 'EPR':
+                                $aceptadoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/ACEPTADOS');
+                                $rechazadoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/RECHAZADOS');
+                                $reparoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/REPAROS');
+
+                                $aceptado = isset($aceptadoNodo[0]) ? intval($aceptadoNodo[0]) : 0;
+                                $rechazado = isset($rechazadoNodo[0]) ? intval($rechazadoNodo[0]) : 0;
+                                $reparo = isset($reparoNodo[0]) ? intval($reparoNodo[0]) : 0;
+
+                                if ($aceptado > 0) {
+                                    $res = 'ACEPTADO';
+                                } elseif ($rechazado > 0) {
+                                    $res = 'RECHAZADO';
+                                } elseif ($reparo > 0) {
+                                    $res = 'REPARO';
+                                } else {
+                                    $res = 'EPR';
+                                }
+
+                                $est = 'EPR' . ($glosa !== '' ? ': ' . $glosa : '');
+                                break;
+
+                            case 'SOK':
+                                $res = 'EN REVISION';
+                                $est = 'Esquema XML OK, SII continúa procesando el envío.';
+                                break;
+
+                            case 'CRT':
+                                $res = 'EN REVISION';
+                                $est = 'Carátula OK, SII continúa procesando el envío.';
+                                break;
+
+                            case 'RSC':
+                                $res = 'RECHAZADO';
+                                $est = 'Rechazado por Error en Schema'
+                                    . ($glosa !== '' ? ': ' . $glosa : '');
+                                break;
+
+                            case 'RFR':
+                                $res = 'RECHAZADO';
+                                $est = 'Rechazado por Error en Firma'
+                                    . ($glosa !== '' ? ': ' . $glosa : '');
+                                break;
+
+                            case 'RCT':
+                                $res = 'RECHAZADO';
+                                $est = 'Rechazado por Error en Carátula'
+                                    . ($glosa !== '' ? ': ' . $glosa : '');
+                                break;
+
+                            case 'RCH':
+                                $res = 'RECHAZADO';
+                                $est = $glosa !== '' ? $glosa : 'Envío rechazado por el SII';
+                                break;
+
+                            case '':
+                                $res = 'ERROR';
+                                $est = 'Respuesta SII sin código de estado.';
+                                break;
+
+                            default:
+                                if (is_numeric($codigoEstado)) {
+                                    $res = 'SII MUY OCUPADO!!';
+                                    $est = 'Código SII ' . $codigoEstado . '. Reintente Ver Estado.';
+                                } else {
+                                    $res = 'EN REVISION';
+                                    $est = 'Estado SII no contemplado: ' . $codigoEstado
+                                        . ($glosa !== '' ? ' - ' . $glosa : '');
+                                }
+                                break;
+                        }
+                    } else {
+                        $res = 'ERROR';
+                        $est = 'SII no responde.';
+
+                        \Log::warning('QUERYESTUP SIN RESPUESTA OBJETO', [
+                            'tipo_dte' => $tipoDTE,
+                            'trackid' => $TrackID,
+                            'respuesta' => is_string($resultado) ? $resultado : gettype($resultado),
+                        ]);
+                    }
+                }
+            }
+
+            // Buscar DTE por TrackID
+            $dte = null;
+
+            switch ($tipoDTE) {
                 case '39':
-                    $dte=boleta::where('trackid',$TrackID)->first();
-                break;
+                    $dte = boleta::where('trackid', $TrackID)->first();
+                    break;
                 case '33':
-                    $dte=factura::where('trackid',$TrackID)->first();
-                break;
+                    $dte = factura::where('trackid', $TrackID)->first();
+                    break;
                 case '61':
-                    $dte=nota_de_credito::where('trackid',$TrackID)->first();
-                break;
+                    $dte = nota_de_credito::where('trackid', $TrackID)->first();
+                    break;
                 case '56':
-                    $dte=nota_de_debito::where('trackid',$TrackID)->first();
-                break;
-
+                    $dte = nota_de_debito::where('trackid', $TrackID)->first();
+                    break;
                 case '52':
-                    $dte=guia_de_despacho::where('trackid',$TrackID)->first();
-                break;
-
-
+                    $dte = guia_de_despacho::where('trackid', $TrackID)->first();
+                    break;
             }
 
-            //actualizar estado
-            if(!is_null($dte)){ //encontrado
+            if (is_null($dte)) {
+                return json_encode([
+                    'estado' => 'ERROR',
+                    'mensaje' => 'DTE con TrackID ' . $TrackID . ' NO ENCONTRADO',
+                ]);
+            }
 
-                    if($tipoDTE=='61'){
-                        list($tipoDOC,$numDOC,$fechaDOC)=explode("*",$dte->docum_referencia);
-                        if($tipoDOC=='fa'){
-                            $dte_ref=factura::where('num_factura',$numDOC)->first();
-                            if(!is_null($dte_ref)){
-                                $dte_ref->docum_referencia="nc*".$dte->num_nota_credito."*".$dte->fecha_emision."*".$dte->motivo_correccion;
-                                $dte_ref->estado="2"; //Modificado con nota de crédito
-                                $dte_ref->save();
-                            }
-                        }
-                        if($tipoDOC=='bo'){
-                            $dte_ref=boleta::where('num_boleta',$numDOC)->first();
-                            if(!is_null($dte_ref)){
-                                $dte_ref->docum_referencia="nc*".$dte->num_nota_credito."*".$dte->fecha_emision."*".$dte->motivo_correccion;
-                                $dte_ref->estado="2"; //Modificado con nota de crédito
-                                $dte_ref->save();
-                            }
+            // Si la nota de crédito fue procesada, actualizamos su documento de referencia
+            if ($tipoDTE == '61' && $res == 'ACEPTADO' && !empty($dte->docum_referencia)) {
+                $partes = explode("*", $dte->docum_referencia);
+
+                if (count($partes) >= 3) {
+                    list($tipoDOC, $numDOC, $fechaDOC) = $partes;
+
+                    if ($tipoDOC == 'fa') {
+                        $dte_ref = factura::where('num_factura', $numDOC)->first();
+
+                        if (!is_null($dte_ref)) {
+                            $dte_ref->docum_referencia =
+                                "nc*" . $dte->num_nota_credito . "*" .
+                                $dte->fecha_emision . "*" . $dte->motivo_correccion;
+                            $dte_ref->estado = 2;
+                            $dte_ref->save();
                         }
                     }
-                
-                    $dte->estado_sii=$res;
-                    $dte->estado=$res=='ACEPTADO'?1:0;
-                    $dte->resultado_envio=$est;
-                    $dte->save();
 
+                    if ($tipoDOC == 'bo') {
+                        $dte_ref = boleta::where('num_boleta', $numDOC)->first();
 
-            }else{
-                $estado=['estado'=>'ERROR','mensaje'=>'DTE con TrackID '.$TrackID.' NO ENCONTRADO'];
-                $estado=json_encode($estado);
+                        if (!is_null($dte_ref)) {
+                            $dte_ref->docum_referencia =
+                                "nc*" . $dte->num_nota_credito . "*" .
+                                $dte->fecha_emision . "*" . $dte->motivo_correccion;
+                            $dte_ref->estado = 2;
+                            $dte_ref->save();
+                        }
+                    }
+                }
             }
-        } catch (\Exception $e) {
-            $estado=['estado'=>'ERROR','mensaje'=>$e->getMessage()];
-            $estado=json_encode($estado);
 
+            $dte->estado_sii = $res;
+            $dte->estado = $res == 'ACEPTADO' ? 1 : 0;
+            $dte->resultado_envio = $est;
+            $dte->save();
+
+            return json_encode([
+                'estado' => $res,
+                'mensaje' => $est,
+            ]);
+
+        } catch (\Throwable $e) {
+            \Log::error('ERROR CONSULTANDO ESTADO SII', [
+                'tipo_dte' => isset($tipoDTE) ? $tipoDTE : null,
+                'trackid' => isset($TrackID) ? $TrackID : null,
+                'mensaje' => $e->getMessage(),
+                'archivo' => $e->getFile(),
+                'linea' => $e->getLine(),
+            ]);
+
+            return json_encode([
+                'estado' => 'ERROR',
+                'mensaje' => $e->getMessage(),
+            ]);
         }
-
-        
-        return $estado;
-
-
     }
+
 
     public function ver_estadotrack($TrackID)
     {
-        
-        $estado=['estado'=>'ERROR','mensaje'=>'No se procesó...'];
-        $estado=json_encode($estado);
-        
+        $res = 'ERROR';
+        $est = 'No se procesó...';
+
         try {
-            $Token=ClsSii::dame_token();
-            
-            list($rut,$dv)=explode("-",str_replace(".","",Session::get('PARAM_RUT')));
-            
-            $resultado=ClsSii::dame_estado_dteUP($TrackID,$rut,$dv,$Token);
-            
-            //echo $resultado->asXML(); //para ver el xml en la consola del navegador pestaña network, seleccionando el archivo, ver en response
-            
-            if(gettype($resultado)=="object")
-            {
-                
-                $est=strval($resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/ESTADO')[0]);
-                
-                if($est!="EPR")
-                {
-                    $msg="SII aún procesando...espere";
-                    $res="EN REVISION";
-                    if($est=='RSC'){
-                        $msg='Rechazado por Error en Schema';
-                        $res="RECHAZADO";
-                    }
-                    if($est=='RFR'){
-                        $msg='Rechazado por Error en Firma';
-                        $res="RECHAZADO";
-                    }
-                    if($est=='RCT'){
-                        $msg='Rechazado por Error en Carátula';
-                        $res="RECHAZADO";
-                    }
+            $Token = ClsSii::dame_token();
 
-                    if($est=='SOK'){
-                        $msg='Esquema XML OK, espere...';
-                    }
-
-                    if($est=='CRT'){
-                        $msg='Carátula OK, espere...';
-                    }
-
-                    if($est=='RCH'){ //en caso de los RCOF
-                        $res="RECHAZADO";
-                        $msg="".$resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/GLOSA')[0]; // le pongo "" al comienzo para "convertirlo" a string jeje
-                        
-                    }
-
-                    if(is_numeric($est)){
-                        $res="SII MUY OCUPADO!!";
-                        $msg="Reintente Ver Estado.";
-                    }
-
-                    $est=$msg;
-                    //$estado=['estado'=>$est,'mensaje'=>$msg];
-                    //return json_encode($estado);
-                }else{ //Respuesta es EPR
-                    $est.=": ".$resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/GLOSA')[0];
-                    
-                    //ESTA PARTE ES PARA DTE
-                    //$est.="Informados: ".$resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/INFORMADOS')[0]."\n";
-
-                    if(isset($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/ACEPTADOS')[0])){
-                        $aceptado=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/ACEPTADOS')[0]);
-                    }else{
-                        $aceptado=0;
-                    }
-
-                    if(isset($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/RECHAZADOS')[0])){
-                        $rechazado=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/RECHAZADOS')[0]);
-                    }else{
-                        $rechazado=0;
-                    }
-
-                    if(isset($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/REPAROS')[0])){
-                        $reparo=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/REPAROS')[0]);
-                    }else{
-                        $reparo=0;
-                    }
-
-                    //$rechazado=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/RECHAZADOS')[0]);
-                    //$reparo=intval($resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/REPAROS')[0]);
-
-                    if($aceptado==0 && $rechazado==0 && $reparo==0){ // viene otra estructura, del RCOF por ejm
-                        $res="EPR";
-                        $est="".$resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/GLOSA')[0]; // le pongo "" al comienzo para "convertirlo" a string jeje
-                    }
-
-                    if($aceptado==1) $res="ACEPTADO";
-                    if($rechazado==1) $res="RECHAZADO";
-                    if($reparo==1) $res="REPARO";
-
-                    //Para RCOF responde diferente
-                    //aprobado: 101318336  llega estado EPR y su GLOSA
-                    //rechazado: 101318250 llega estado RCH y su GLOSA
-                }
-
-                $estado=['estado'=>$res,'mensaje'=>$est];
-                $estado=json_encode($estado);
-
+            if (!$Token) {
+                return json_encode([
+                    'estado' => 'ERROR',
+                    'mensaje' => 'No se pudo obtener Token SII',
+                ]);
             }
 
-            if(gettype($resultado)=="string")
-            {
-                //$estado="sii_controlador: Llegó un string de ".strlen($resultado)." caracteres.\n valor:".$resultado;
-                $estado=['estado'=>'ERROR','mensaje'=>'SII no responde.'];
-                $estado=json_encode($estado);
+            list($rut, $dv) = explode("-", str_replace(".", "", Session::get('PARAM_RUT')));
+
+            $resultado = ClsSii::dame_estado_dteUP($TrackID, $rut, $dv, $Token);
+
+            if (!is_object($resultado)) {
+                \Log::warning('VER_ESTADOTRACK SIN RESPUESTA OBJETO', [
+                    'trackid' => $TrackID,
+                    'respuesta' => is_string($resultado) ? $resultado : gettype($resultado),
+                ]);
+
+                return json_encode([
+                    'estado' => 'ERROR',
+                    'mensaje' => 'SII no responde.',
+                ]);
             }
 
+            \Log::info('RESPUESTA SII VER_ESTADOTRACK', [
+                'trackid' => $TrackID,
+                'xml' => method_exists($resultado, 'asXML')
+                    ? $resultado->asXML()
+                    : null,
+            ]);
 
-        } catch (\Exception $e) {
-            $estado=['estado'=>'ERROR','mensaje'=>$e->getMessage()];
-            $estado=json_encode($estado);
+            $estadoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/ESTADO');
+            $glosaNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_HDR/GLOSA');
 
+            $codigoEstado = isset($estadoNodo[0]) ? strval($estadoNodo[0]) : '';
+            $glosa = isset($glosaNodo[0]) ? strval($glosaNodo[0]) : '';
+
+            switch ($codigoEstado) {
+                case 'EPR':
+                    $aceptadoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/ACEPTADOS');
+                    $rechazadoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/RECHAZADOS');
+                    $reparoNodo = $resultado->xpath('/SII:RESPUESTA/SII:RESP_BODY/REPAROS');
+
+                    $aceptado = isset($aceptadoNodo[0]) ? intval($aceptadoNodo[0]) : 0;
+                    $rechazado = isset($rechazadoNodo[0]) ? intval($rechazadoNodo[0]) : 0;
+                    $reparo = isset($reparoNodo[0]) ? intval($reparoNodo[0]) : 0;
+
+                    if ($aceptado > 0) {
+                        $res = 'ACEPTADO';
+                    } elseif ($rechazado > 0) {
+                        $res = 'RECHAZADO';
+                    } elseif ($reparo > 0) {
+                        $res = 'REPARO';
+                    } else {
+                        $res = 'EPR';
+                    }
+
+                    $est = 'EPR' . ($glosa !== '' ? ': ' . $glosa : '');
+                    break;
+
+                case 'SOK':
+                    $res = 'EN REVISION';
+                    $est = 'Esquema XML OK, SII continúa procesando el envío.';
+                    break;
+
+                case 'CRT':
+                    $res = 'EN REVISION';
+                    $est = 'Carátula OK, SII continúa procesando el envío.';
+                    break;
+
+                case 'RSC':
+                    $res = 'RECHAZADO';
+                    $est = 'Rechazado por Error en Schema'
+                        . ($glosa !== '' ? ': ' . $glosa : '');
+                    break;
+
+                case 'RFR':
+                    $res = 'RECHAZADO';
+                    $est = 'Rechazado por Error en Firma'
+                        . ($glosa !== '' ? ': ' . $glosa : '');
+                    break;
+
+                case 'RCT':
+                    $res = 'RECHAZADO';
+                    $est = 'Rechazado por Error en Carátula'
+                        . ($glosa !== '' ? ': ' . $glosa : '');
+                    break;
+
+                case 'RCH':
+                    $res = 'RECHAZADO';
+                    $est = $glosa !== '' ? $glosa : 'Envío rechazado por el SII';
+                    break;
+
+                case '':
+                    $res = 'ERROR';
+                    $est = 'Respuesta SII sin código de estado.';
+                    break;
+
+                default:
+                    if (is_numeric($codigoEstado)) {
+                        $res = 'SII MUY OCUPADO!!';
+                        $est = 'Código SII ' . $codigoEstado . '. Reintente Ver Estado.';
+                    } else {
+                        $res = 'EN REVISION';
+                        $est = 'Estado SII no contemplado: ' . $codigoEstado
+                            . ($glosa !== '' ? ' - ' . $glosa : '');
+                    }
+                    break;
+            }
+
+            return json_encode([
+                'estado' => $res,
+                'mensaje' => $est,
+            ]);
+
+        } catch (\Throwable $e) {
+            \Log::error('ERROR VER_ESTADOTRACK', [
+                'trackid' => $TrackID,
+                'mensaje' => $e->getMessage(),
+                'archivo' => $e->getFile(),
+                'linea' => $e->getLine(),
+            ]);
+
+            return json_encode([
+                'estado' => 'ERROR',
+                'mensaje' => $e->getMessage(),
+            ]);
         }
-
-
-        return $estado;
-
-
     }
+
 
     public function estadodte(){
 
@@ -526,12 +627,12 @@ class sii_controlador extends Controller
 
     public function guardar_caf(Request $r)
     {
-       
+
         $archivo=$r->file('archivo');
         $nombre=$archivo->getClientOriginalName();
-        
+
         $donde=base_path('xml/caf');
-       
+
         $c=correlativo::find($r->iddocu);
 
         if(!is_null($c))
@@ -618,7 +719,7 @@ class sii_controlador extends Controller
         if(Auth::user()->rol->nombrerol == "Administrador"){
             return view('sii.cargar_folios',compact('locales'))->render();
         }else return redirect('home');
-        
+
     }
 
     public function anularfolios()

@@ -26,6 +26,8 @@ class cliente_modelo extends Model
         'descuento',
         'tipo_descuento',
         'porcentaje',
+        'descuento_web',
+        'porcentaje_web',
         'veces_buscado',
         'activo',
         'descripcion_activo',

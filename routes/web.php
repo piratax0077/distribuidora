@@ -772,6 +772,7 @@ Route::middleware(['auth'])->prefix('ventas')->group(function ()
     Route::get('/nota_venta','ventas_controlador@nota_venta_vista');
     Route::get('/nota_venta/buscar/{numero_carrito}','ventas_controlador@nota_venta_buscar');
     Route::post('/nota_venta/cambiar_estado','ventas_controlador@nota_venta_cambiar_estado');
+    Route::post('/nota_venta/actualizar_seguimiento','ventas_controlador@nota_venta_actualizar_seguimiento');
 
 });
 
@@ -1320,5 +1321,14 @@ Route::get('/generate-pdf','pdf_controlador@generatePdf');
 
 Route::post('dame_ventas_vendedor','ventas_controlador@dame_ventas_vendedor')->name('dame_ventas_vendedor');
 
+Route::get('/limpiar-cache-sistema', function () {
+
+    \Artisan::call('config:clear');
+    \Artisan::call('cache:clear');
+    \Artisan::call('route:clear');
+    \Artisan::call('view:clear');
+
+    return 'Cache Laravel limpiada correctamente';
+});
 
 Auth::routes(); //no borrar y siempre al final

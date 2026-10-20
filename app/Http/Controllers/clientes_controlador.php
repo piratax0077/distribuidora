@@ -280,6 +280,10 @@ class clientes_controlador extends Controller
             $c->descuento=$r->descuento;
             $c->tipo_descuento=$r->tipodescuento;
             $c->porcentaje=$r->porcentaje;
+            $c->descuento_web=$r->boolean('descuento_web');
+            $c->porcentaje_web=$c->descuento_web
+                ? min(100, max(0, floatval($r->porcentaje_web)))
+                : 0;
             // el campo veces_buscado tiene por defecto = 0;
             // $c->activo=1;
             $c->usuarios_id=Auth::user()->id;

@@ -442,6 +442,10 @@
           document.getElementById('Familia_porcentaje').value=0;
           borrar_descuentos();
         }
+        document.getElementById('descuento_canal_web').checked = Number(ccc.descuento_web) === 1;
+        document.getElementById('descuento_canal_tradicional').checked = Number(ccc.descuento_web) !== 1;
+        document.getElementById('desc_porcentaje_web').value = Number(ccc.porcentaje_web || 0);
+        document.getElementById('desc_porcentaje_web').disabled = Number(ccc.descuento_web) !== 1;
         let formas_pago = resp[3];
         $('#tbody_formas_pago_cliente').empty();
         formas_pago.forEach(function(forma){
@@ -1317,7 +1321,9 @@ function eliminar_dato_cliente(param,tipo){
         credito:xCredito,
         descuento:xDescuento,
         tipodescuento:xTipoDescuento,
-        porcentaje:document.getElementById("desc_porcentaje").value
+        porcentaje:document.getElementById("desc_porcentaje").value,
+        descuento_web:document.getElementById('descuento_canal_web').checked ? 1 : 0,
+        porcentaje_web:document.getElementById('desc_porcentaje_web').value
       };
 
       console.log(parametros);
@@ -2480,6 +2486,21 @@ function editarDireccionCliente(){
               <div class="col-sm-10">
                 <input type="radio" name="descuento" value="3" id="desc_familia" onclick="activa_descuento(3)">
                 <label for="desc_familia">Por Familia</label>
+              </div>
+            </div>
+            <div class="row mt-3">
+              <div class="col-sm-12">
+                <strong>Canal donde se aplica el descuento:</strong><br>
+                <input type="radio" name="canal_descuento" id="descuento_canal_tradicional" value="0" checked
+                       onclick="document.getElementById('desc_porcentaje_web').disabled=true">
+                <label for="descuento_canal_tradicional">Venta tradicional</label>
+                &nbsp;&nbsp;
+                <input type="radio" name="canal_descuento" id="descuento_canal_web" value="1"
+                       onclick="document.getElementById('desc_porcentaje_web').disabled=false">
+                <label for="descuento_canal_web">PÃ¡gina web</label>
+                &nbsp;&nbsp;
+                <input type="number" id="desc_porcentaje_web" min="0" max="100" step="0.01"
+                       value="0" disabled placeholder="% web" style="width:100px">
               </div>
             </div>
         </fieldset>

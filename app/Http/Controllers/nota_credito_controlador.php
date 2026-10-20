@@ -581,7 +581,11 @@ class nota_credito_controlador extends Controller
                     $ncd->id_facturas_detalle=$ids[$num_item_xml-1]; //REVISAR:
                     $ncd->id_repuestos=$idreps[$num_item_xml-1]; //REVISAR:
                     $ncd->id_unidad_venta=0;
-                    $ncd->id_local=Session::get('local');
+                    $ncd->id_local=$this->localOriginalDelDetalle(
+                        $docum_referencia,
+                        $ids[$num_item_xml-1],
+                        Session::get('local')
+                    );
                     $ncd->precio_venta=$Det->PrcItem; //round(intval($Det->PrcItem)*(1+Session::get('PARAM_IVA')),2);
                     $ncd->cantidad=intval($Det->QtyItem);
                     $ncd->subtotal=$Det->MontoItem; //$total_item;
@@ -591,9 +595,8 @@ class nota_credito_controlador extends Controller
                     $ncd->usuarios_id=Auth::user()->id;
                     $ncd->repuesto_devuelto = 0;
                     $ncd->save();
-                    //actualizar saldos
-                    $rc = new repuestocontrolador();
-                    $rc->actualiza_saldos("I", $ncd->id_repuestos, $ncd->id_local, $ncd->cantidad);
+                    // La NC es un documento contable. El stock se reincorpora
+                    // sólo cuando bodega acepta la devolución física.
 
                 }
             }
@@ -786,7 +789,11 @@ class nota_credito_controlador extends Controller
                 $ncd->id_facturas_detalle=$ids[$i];
                 $ncd->id_repuestos=$idreps[$i];
                 $ncd->id_unidad_venta=0;
-                $ncd->id_local=Session::get('local');
+                $ncd->id_local=$this->localOriginalDelDetalle(
+                    $r->docum_referencia,
+                    $ids[$i],
+                    Session::get('local')
+                );
                 $ncd->precio_venta=$precios[$i];
                 $ncd->cantidad=$cantidades[$i];
                 $ncd->subtotal=$subtotales[$i];
@@ -796,9 +803,7 @@ class nota_credito_controlador extends Controller
                 $ncd->usuarios_id=Auth::user()->id;
                 $ncd->save();
 
-                //actualizar saldos
-                $rc = new repuestocontrolador();
-                $rc->actualiza_saldos("I", $ncd->id_repuestos, $ncd->id_local, $ncd->cantidad);
+                // La recepción física y el aumento de stock ocurren en bodega.
             }
         }
 
@@ -818,6 +823,21 @@ class nota_credito_controlador extends Controller
             $rpta=$c0->id;
         }
         return $rpta;
+    }
+
+    private function localOriginalDelDetalle($documentoReferencia, $detalleId, $fallback)
+    {
+        $tipo = strtolower(trim(explode('*', (string) $documentoReferencia)[0] ?? ''));
+
+        if ($tipo === 'fa') {
+            return factura_detalle::where('id', $detalleId)->value('id_local') ?? $fallback;
+        }
+
+        if ($tipo === 'bo') {
+            return boleta_detalle::where('id', $detalleId)->value('id_local') ?? $fallback;
+        }
+
+        return $fallback;
     }
 
     public function dame_nota_credito($num_nc){

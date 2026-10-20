@@ -116,13 +116,12 @@ Route::get('{id}/ordenar_buscador/{tag}','api_controlador@ordenar_buscador');
 
 Route::get('{id}/ordenar_buscador_con_marca/{tag}/{marca}','api_controlador@ordenar_buscador_con_marca');
 
+// Mantiene el contrato historico de la ruta; el controlador valida el JWT y la propiedad.
 Route::get('{numero_carrito}/detalle_venta','api_controlador@detalle_venta');
 
 Route::get('/confirmar_pago/{id}','api_controlador@confirmar_pago');
 
 
-
-Route::get('/dame_detalle_retiro/{numero_carrito}','api_controlador@dame_detalle_retiro');
 
 Route::get('/ordenar_rango_precio/{min}/{max}','api_controlador@ordenar_rango_precio');
 
@@ -162,6 +161,8 @@ Route::post('update_user', 'api_controlador@update_user');
 
 Route::post('login', 'api_controlador@authenticate');
 
+Route::get('/marcas-repuestos-catalogo', 'api_controlador@marcasRepuestosCatalogo');
+
 //Enviar correos
 
 
@@ -186,6 +187,10 @@ Route::get('/dameroles_demo','api_controlador@dameroles_demo');
 
 
 
+// Autenticación acotada dentro del controlador para hostings que eliminan Authorization.
+Route::post('/repetir_carrito','api_controlador@repetir_carrito')
+    ->middleware('throttle:20,1');
+
 Route::group(['middleware' => ['jwt.verify']], function() {
 
     //Todo lo que este dentro de este grupo requiere verificación de usuario.
@@ -196,9 +201,15 @@ Route::group(['middleware' => ['jwt.verify']], function() {
 
     Route::get('/revisar_carrito','api_controlador@revisar_carrito_virtual');
 
+    Route::get('/dame_detalle_retiro/{numero_carrito}','api_controlador@dame_detalle_retiro');
+
     Route::post('/agregar_carrito_virtual','api_controlador@agregar_carrito_virtual');
 
+    Route::post('/limpiar_carrito','api_controlador@limpiar_carrito');
+
     Route::get('/eliminar_item_carrito/{idrep}/{numero_carrito}','api_controlador@eliminar_item_carrito');
+
+    Route::post('/actualizar_cantidad_carrito','api_controlador@actualizar_cantidad_carrito_seguro');
 
     Route::post('/enviar_nota_venta','api_controlador@enviar_nota_venta');
 
@@ -235,6 +246,7 @@ Route::group(['middleware' => ['jwt.verify']], function() {
     Route::get('/buscar_por_oem/{oem}','api_controlador@buscar_por_oem');
 
     Route::get('{id}/repuesto','api_controlador@damerepuesto');
+    Route::post('repuestos/{id}/valoracion','api_controlador@guardarValoracionRepuesto')->middleware('throttle:30,1');
 
     Route::get('{familia}/buscar_medida_familia/{medida}','api_controlador@buscar_medida_familia');
 

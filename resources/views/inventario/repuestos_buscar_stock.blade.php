@@ -443,6 +443,12 @@
                           });
 
                           actualizar_stock(idRepuestoRespuesta);
+                      }else if(resp && resp[0] === 'error'){
+                          Vue.swal({
+                              title: 'No se pudo actualizar',
+                              text: resp[1] || 'Ocurrió un error al guardar la modificación de stock.',
+                              icon: 'error'
+                          });
                       }else{
                           Vue.swal({
                               title: 'No se pudo actualizar',
@@ -1795,7 +1801,7 @@
         <button type="button" class="btn btn-search" onclick="buscar_stock_repuesto()">
           <i class="fas fa-search"></i> Buscar
         </button>
-        <a href="{{url('repuesto/descargar-repuestos')}}" class="btn btn-excel">
+        <a href="{{url('repuesto/descargar-repuestos')}}" class="btn btn-excel" id="exportarExcel">
           <i class="fas fa-file-excel"></i> Excel
         </a>
         <button type="button" class="btn btn-transfer" onclick="confirmar_traspaso_bodega_preventa()">

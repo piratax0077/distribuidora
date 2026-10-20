@@ -16,6 +16,8 @@ use App\carrito_guardado;
 use App\carrito_transferido;
 use App\carrito_virtual;
 use App\carrito_virtual_detalle;
+use App\nota_venta_seguimiento;
+use App\nota_venta_estado_historial;
 use App\cliente_direcciones;
 use App\clientes_giro;
 use App\cliente_vendedor;
@@ -67,6 +69,7 @@ use App\compras_det;
 use App\regulador_voltaje;
 use App\dte_rechazados;
 use App\stock_minimo;
+use App\Services\StockService;
 Use App\motorPartida;
 use App\cliente_formas_pago;
 use Session;
@@ -86,6 +89,8 @@ use App\Http\Controllers\correos_controlador;
 use App\Http\Controllers\clientes_controlador;
 
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class ventas_controlador extends Controller
 {
@@ -5332,20 +5337,11 @@ class ventas_controlador extends Controller
                         //Buscamos el repuesto que se debe descontar el stock
                         $repuesto = repuesto::find($i->id_repuestos);
 
-                        //Descontamos el stock de acuerdo al local
-                        if($repuesto->id_local == $i->id_local){
-                            $repuesto->stock_actual = $repuesto->stock_actual - intval($i->cantidad);
-                            $repuesto->save();
-                        }elseif($repuesto->id_local_dos == $i->id_local){
-                            $repuesto->stock_actual_mermas = $repuesto->stock_actual_mermas - intval($i->cantidad);
-                            $repuesto->save();
-                        }elseif($repuesto->id_local_tres == $i->id_local){
-                            $repuesto->stock_actual_preventa = $repuesto->stock_actual_preventa - intval($i->cantidad);
-                            $repuesto->save();
-                        }else{
-                            $repuesto->stock_actual = $repuesto->stock_actual - intval($i->cantidad);
-                            $repuesto->save();
-                        }
+                        app(StockService::class)->adjust(
+                            (int) $i->id_repuestos,
+                            (int) $i->id_local,
+                            -intval($i->cantidad)
+                        );
                         $this->revisar_stock_minimo($repuesto->id);
 
                         $bd->save();
@@ -5393,9 +5389,11 @@ class ventas_controlador extends Controller
                         $repuesto = repuesto::find($i->id_repuestos);
 
 
-                        //Descontamos el stock de acuerdo al local
-                        $repuesto->stock_actual = $repuesto->stock_actual - intval($i->cantidad);
-                        $repuesto->save();
+                        app(StockService::class)->adjust(
+                            (int) $i->id_repuestos,
+                            (int) $i->id_local,
+                            -intval($i->cantidad)
+                        );
 
 
                         $this->revisar_stock_minimo($repuesto->id);
@@ -5505,20 +5503,11 @@ class ventas_controlador extends Controller
                         }
                         //Buscamos el repuesto que se debe descontar el stock
                         $repuesto = repuesto::find($i->id_repuestos);
-                        //Descontamos el stock de acuerdo al local
-                        if($repuesto->id_local == $i->id_local){
-                            $repuesto->stock_actual = $repuesto->stock_actual - intval($i->cantidad);
-                            $repuesto->save();
-                        }elseif($repuesto->id_local_dos == $i->id_local){
-                            $repuesto->stock_actual_mermas = $repuesto->stock_actual_mermas - intval($i->cantidad);
-                            $repuesto->save();
-                        }elseif($repuesto->id_local_tres == $i->id_local){
-                            $repuesto->stock_actual_preventa = $repuesto->stock_actual_preventa - intval($i->cantidad);
-                            $repuesto->save();
-                        }else{
-                            $repuesto->stock_actual = $repuesto->stock_actual - intval($i->cantidad);
-                            $repuesto->save();
-                        }
+                        app(StockService::class)->adjust(
+                            (int) $i->id_repuestos,
+                            (int) $i->id_local,
+                            -intval($i->cantidad)
+                        );
 
 
                         $this->revisar_stock_minimo($repuesto->id);
@@ -5565,9 +5554,11 @@ class ventas_controlador extends Controller
                         $repuesto = repuesto::find($i->id_repuestos);
 
 
-                            //Descontamos el stock de acuerdo al local
-                            $repuesto->stock_actual = $repuesto->stock_actual - intval($i->cantidad);
-                            $repuesto->save();
+                            app(StockService::class)->adjust(
+                                (int) $i->id_repuestos,
+                                (int) $i->id_local,
+                                -intval($i->cantidad)
+                            );
 
                             $this->revisar_stock_minimo($repuesto->id);
                             $fd->save();
@@ -8537,6 +8528,12 @@ where oems.codigo_oem='MS1173GP025'
     }
 
     public function devolverstockrechazado(Request $req){
+        return $this->devolverStockDteRechazadoSeguro(
+            (string) $req->tipodte,
+            (string) $req->num_doc
+        );
+
+        /* Flujo histórico conservado como referencia; no se ejecuta. */
         $tipodte = $req->tipodte;
         $num_doc = $req->num_doc;
         $mensaje = '';
@@ -8598,6 +8595,70 @@ where oems.codigo_oem='MS1173GP025'
             return ['estado' => 'ok', 'msj' => 'SUS PRODUCTOS FUERON DEVUELTOS'];
         }else{
             return ['estado' => 'error', 'msj' => 'no hay detalle'];
+        }
+    }
+
+    private function devolverStockDteRechazadoSeguro(string $tipoDte, string $numeroDocumento)
+    {
+        if (!in_array($tipoDte, ['33', '39'], true)) {
+            return ['estado' => 'error', 'msj' => 'Tipo de documento no válido'];
+        }
+
+        try {
+            return DB::transaction(function () use ($tipoDte, $numeroDocumento) {
+                $esFactura = $tipoDte === '33';
+                $documento = $esFactura
+                    ? factura::where('num_factura', $numeroDocumento)->lockForUpdate()->first()
+                    : boleta::where('num_boleta', $numeroDocumento)->lockForUpdate()->first();
+
+                if (!$documento || (int) $documento->estado !== 0) {
+                    return ['estado' => 'error', 'msj' => 'El documento no está rechazado o no existe'];
+                }
+
+                if ((int) $documento->devuelto === 1) {
+                    return ['estado' => 'error', 'msj' => 'Este documento ya fue devuelto'];
+                }
+
+                $detalles = $esFactura
+                    ? factura_detalle::where('id_factura', $documento->id)->get()
+                    : boleta_detalle::where('id_boleta', $documento->id)->get();
+
+                if ($detalles->isEmpty()) {
+                    return ['estado' => 'error', 'msj' => 'El documento no tiene detalle para devolver'];
+                }
+
+                $repuestosDevueltos = [];
+                foreach ($detalles as $detalle) {
+                    $repuesto = app(StockService::class)->adjust(
+                        (int) $detalle->id_repuestos,
+                        (int) $detalle->id_local,
+                        (int) $detalle->cantidad
+                    );
+
+                    $repuestosDevueltos[] = [
+                        'codigo_interno' => $repuesto->codigo_interno,
+                        'cantidad_devuelta' => (int) $detalle->cantidad,
+                        'id_local' => (int) $detalle->id_local,
+                    ];
+                }
+
+                $documento->devuelto = 1;
+                $documento->save();
+
+                return [
+                    'estado' => 'ok',
+                    'msj' => 'Los productos fueron devueltos al stock',
+                    'codigos_internos' => $repuestosDevueltos,
+                ];
+            });
+        } catch (\Throwable $e) {
+            \Log::error('Error devolviendo stock de DTE rechazado', [
+                'tipo_dte' => $tipoDte,
+                'num_doc' => $numeroDocumento,
+                'mensaje' => $e->getMessage(),
+            ]);
+
+            return ['estado' => 'error', 'msj' => $e->getMessage()];
         }
     }
 
@@ -11116,7 +11177,25 @@ where oems.codigo_oem='MS1173GP025'
             }
 
             $primero = $items->first();
-            $estado_nv = $primero->estado; // estado del primer ítem (todos tienen el mismo)
+            $estado_nv = $primero->estado; // estado operativo heredado
+            $seguimiento = nota_venta_seguimiento::firstOrCreate(
+                ['numero_nota_venta' => $numero_carrito],
+                [
+                    'cliente_id' => $primero->cliente_id,
+                    'estado_pedido' => 'recibido',
+                    'estado_pago' => 'pendiente',
+                    'estado_entrega' => 'pendiente',
+                ]
+            );
+            if ($seguimiento->wasRecentlyCreated) {
+                nota_venta_estado_historial::create([
+                    'nota_venta_seguimiento_id' => $seguimiento->id,
+                    'tipo_estado' => 'pedido',
+                    'estado_nuevo' => 'recibido',
+                    'observacion' => 'Seguimiento inicial creado para una nota existente.',
+                    'usuario_id' => Auth::id(),
+                ]);
+            }
 
             $nota_venta = [
                 'numero_carrito' => $primero->numero_carrito,
@@ -11129,6 +11208,12 @@ where oems.codigo_oem='MS1173GP025'
                 'nota_venta'  => $nota_venta,
                 'detalle'     => $items,
                 'estado_nv'   => $estado_nv,
+                'seguimiento' => $seguimiento->load('historial'),
+                'opciones_estados' => [
+                    'pedido' => nota_venta_seguimiento::estadosPedido(),
+                    'pago' => nota_venta_seguimiento::estadosPago(),
+                    'entrega' => nota_venta_seguimiento::estadosEntrega(),
+                ],
             ];
 
             return json_encode($estado);
@@ -11169,6 +11254,124 @@ where oems.codigo_oem='MS1173GP025'
         } catch (\Exception $e) {
             $estado = ['estado' => 'ERROR', 'mensaje' => substr($e->getMessage(), 0, 300)];
             return json_encode($estado);
+        }
+    }
+
+    public function nota_venta_actualizar_seguimiento(Request $r)
+    {
+        $validator = Validator::make($r->all(), [
+            'numero_carrito' => 'required|integer',
+            'estado_pedido' => 'required|string',
+            'estado_pago' => 'required|string',
+            'estado_entrega' => 'required|string',
+            'tipo_entrega' => 'nullable|in:domicilio,retiro',
+            'transportista' => 'nullable|string|max:100',
+            'numero_seguimiento' => 'nullable|string|max:150',
+            'observacion_cliente' => 'nullable|string|max:2000',
+            'observacion_interna' => 'nullable|string|max:2000',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['estado' => 'ERROR', 'mensaje' => $validator->errors()->first()], 422);
+        }
+
+        if (!in_array($r->estado_pedido, nota_venta_seguimiento::estadosPedido()) ||
+            !in_array($r->estado_pago, nota_venta_seguimiento::estadosPago()) ||
+            !in_array($r->estado_entrega, nota_venta_seguimiento::estadosEntrega())) {
+            return response()->json(['estado' => 'ERROR', 'mensaje' => 'Uno de los estados seleccionados no es válido.'], 422);
+        }
+
+        if (in_array($r->estado_pedido, ['rechazado', 'cancelado']) && !$r->filled('observacion_cliente')) {
+            return response()->json(['estado' => 'ERROR', 'mensaje' => 'Debe indicar el motivo visible para el cliente.'], 422);
+        }
+        if ($r->estado_entrega === 'despachado' && !$r->filled('transportista')) {
+            return response()->json(['estado' => 'ERROR', 'mensaje' => 'Debe indicar el transportista antes de marcar el pedido como despachado.'], 422);
+        }
+
+        $seguimientoActual = nota_venta_seguimiento::where('numero_nota_venta', $r->numero_carrito)->first();
+        if (!$seguimientoActual) {
+            return response()->json(['estado' => 'ERROR', 'mensaje' => 'No existe seguimiento para esta nota de venta.'], 404);
+        }
+        $transiciones = [
+            'pedido' => [
+                'recibido' => ['revision', 'confirmado', 'rechazado', 'cancelado'],
+                'revision' => ['confirmado', 'rechazado', 'cancelado'],
+                'confirmado' => ['cancelado'],
+                'rechazado' => [], 'cancelado' => [],
+            ],
+            'pago' => [
+                'pendiente' => ['validando', 'pagado', 'rechazado'],
+                'validando' => ['pagado', 'rechazado'],
+                'pagado' => ['reembolsado'],
+                'rechazado' => ['validando'], 'reembolsado' => [],
+            ],
+            'entrega' => [
+                'pendiente' => ['preparando', 'incidencia'],
+                'preparando' => ['listo_retiro', 'despachado', 'incidencia'],
+                'listo_retiro' => ['entregado', 'incidencia'],
+                'despachado' => ['entregado', 'incidencia'],
+                'incidencia' => ['preparando', 'listo_retiro', 'despachado'],
+                'entregado' => [],
+            ],
+        ];
+        $solicitudesCambio = [
+            ['tipo' => 'pedido', 'actual' => $seguimientoActual->estado_pedido, 'nuevo' => $r->estado_pedido],
+            ['tipo' => 'pago', 'actual' => $seguimientoActual->estado_pago, 'nuevo' => $r->estado_pago],
+            ['tipo' => 'entrega', 'actual' => $seguimientoActual->estado_entrega, 'nuevo' => $r->estado_entrega],
+        ];
+        foreach ($solicitudesCambio as $cambio) {
+            if ($cambio['actual'] !== $cambio['nuevo'] && !in_array($cambio['nuevo'], $transiciones[$cambio['tipo']][$cambio['actual']])) {
+                return response()->json([
+                    'estado' => 'ERROR',
+                    'mensaje' => 'No se permite cambiar el estado de '.$cambio['tipo'].' de "'.$cambio['actual'].'" a "'.$cambio['nuevo'].'".',
+                ], 422);
+            }
+        }
+
+        try {
+            $seguimiento = \DB::transaction(function () use ($r) {
+                $seguimiento = nota_venta_seguimiento::where('numero_nota_venta', $r->numero_carrito)
+                    ->lockForUpdate()->firstOrFail();
+
+                $cambios = [
+                    'pedido' => ['campo' => 'estado_pedido', 'nuevo' => $r->estado_pedido],
+                    'pago' => ['campo' => 'estado_pago', 'nuevo' => $r->estado_pago],
+                    'entrega' => ['campo' => 'estado_entrega', 'nuevo' => $r->estado_entrega],
+                ];
+                foreach ($cambios as $tipo => $cambio) {
+                    $anterior = $seguimiento->{$cambio['campo']};
+                    if ($anterior !== $cambio['nuevo']) {
+                        nota_venta_estado_historial::create([
+                            'nota_venta_seguimiento_id' => $seguimiento->id,
+                            'tipo_estado' => $tipo,
+                            'estado_anterior' => $anterior,
+                            'estado_nuevo' => $cambio['nuevo'],
+                            'observacion' => $r->observacion_interna ?: $r->observacion_cliente,
+                            'usuario_id' => Auth::id(),
+                        ]);
+                    }
+                }
+
+                $seguimiento->fill($r->only([
+                    'estado_pedido', 'estado_pago', 'estado_entrega', 'tipo_entrega',
+                    'transportista', 'numero_seguimiento', 'observacion_cliente', 'observacion_interna',
+                ]));
+                $ahora = Carbon::now();
+                if ($r->estado_pedido === 'confirmado' && !$seguimiento->confirmado_at) $seguimiento->confirmado_at = $ahora;
+                if ($r->estado_entrega === 'preparando' && !$seguimiento->preparando_at) $seguimiento->preparando_at = $ahora;
+                if ($r->estado_entrega === 'despachado' && !$seguimiento->despachado_at) $seguimiento->despachado_at = $ahora;
+                if ($r->estado_entrega === 'entregado' && !$seguimiento->entregado_at) $seguimiento->entregado_at = $ahora;
+                $seguimiento->save();
+
+                return $seguimiento;
+            });
+
+            return response()->json([
+                'estado' => 'OK',
+                'mensaje' => 'Seguimiento de la Nota de Venta N° '.$r->numero_carrito.' actualizado correctamente.',
+                'seguimiento' => $seguimiento->load('historial'),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['estado' => 'ERROR', 'mensaje' => substr($e->getMessage(), 0, 300)], 500);
         }
     }
 }
