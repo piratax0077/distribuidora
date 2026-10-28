@@ -2,71 +2,50 @@
 @section('titulo','Estado DTE')
 @section('style')
 <style>
-    .contenedor{
-        display:grid;
-        grid-template-columns: 1fr 1fr 1fr 1fr;
-        grid-template-rows: 30px 80px auto;
-        grid-gap: 4px;
+    .contenedor{ padding: 16px; }
+    .estado-dte-panel{
+        background: #fff;
+        border: 1px solid #dfe5eb;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.06);
+        padding: 18px;
+        margin-bottom: 14px;
     }
-    .titulo{
-        grid-column: 1/5;
-    }
-    .periodo{
-        grid-column: 1/4;
-        grid-row:2/3;
-        display:grid;
-        grid-template-columns: 2fr 2fr 1fr;
-        grid-template-rows: 25px 50px;
-        grid-auto-flow: column;
-        padding: 3px;
-    }
-
+    .estado-dte-panel h5{ margin-bottom: 4px; color: #274c66; }
+    .estado-dte-ayuda{ color: #657786; margin-bottom: 14px; }
     #tipo_dte{
-        background-color: khaki;
-        grid-column: 1/4;
-        display:grid;
-        grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
-        grid-auto-flow: column;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        padding: 12px;
+        border: 1px solid #e4e8ec;
+        border-radius: 6px;
+        background: #f8fafc;
     }
-    #fechainicial{
-        align-self: center;
-        justify-self: center;
-        grid-column: 1/2;
-        grid-row: 2/3;
-        display:grid;
-        grid-auto-flow: column;
-    }
-    #fechafinal{
-        align-self: center;
-        justify-self: center;
-        grid-column: 2/3;
-        grid-row: 2/3;
-        display:grid;
-        grid-auto-flow: column;
-    }
-    #boton_buscar{
-        align-self: center;
-        justify-self: center;
-        grid-column: 3/4;
-        grid-row: 2/3;
-    }
-    #btn_enviar_correo{
-        align-self: center;
-        justify-self: center;
-        grid-column: 4/5;
-        grid-row: 2/3;
-    }
+    #tipo_dte label{ margin: 0 0 0 4px; cursor: pointer; }
     #listado_dte{
-        grid-column: 1/5;
-        grid-row: 3/4;
         background-color:floralwhite;
+        overflow-x: auto;
+        border-radius: 6px;
     }
-
-
-    p{
-        margin-bottom: 0px;
+    #revision_sii{
+        display: none;
+        margin: 0 0 14px;
+        padding: 12px 16px;
+        border-left-width: 5px;
+        font-size: 15px;
     }
-
+    .estado-dte-leyenda{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+    }
+    .estado-dte-leyenda span{ border-radius: 12px; padding: 3px 10px; font-size: 12px; }
+    @media (max-width: 767px){
+        .contenedor{ padding: 8px; }
+        .estado-dte-panel{ padding: 12px; }
+    }
 </style>
 @endsection
 @section('javascript')
@@ -337,16 +316,45 @@
             },
             success:function(rs){
                 console.log(rs);
-                // return false;
                 Vue.swal.close();
-                //rs=JSON.parse(rs);
+                mostrar_revision_sii(rs, TrackID);
                 listar_dtes();
             },
             error: function(error){
-
-                $('#listado_dte').html(formatear_error(error.responseText));
+                Vue.swal.close();
+                mostrar_revision_sii({
+                    estado: 'ERROR',
+                    mensaje: formatear_error(error.responseText || 'No fue posible consultar al SII.')
+                }, TrackID);
             }
         });
+    }
+
+    function mostrar_revision_sii(respuesta, TrackID){
+        let rs = respuesta;
+
+        if(typeof rs === 'string'){
+            try {
+                rs = JSON.parse(rs);
+            } catch (e) {
+                rs = {estado: 'ERROR', mensaje: formatear_error(rs)};
+            }
+        }
+
+        rs = rs || {};
+        let estado = rs.estado || 'ERROR';
+        let mensaje = rs.mensaje || 'El SII no entregó detalles de la revisión.';
+        let esError = estado === 'ERROR' || estado.indexOf('ERROR') !== -1;
+        let texto = 'Revisión SII' + (TrackID ? ' · TrackID ' + TrackID : '') +
+            ': ' + estado + '. ' + mensaje;
+
+        $('#revision_sii')
+            .removeClass('alert-info alert-danger')
+            .addClass(esError ? 'alert-danger' : 'alert-info')
+            .text(texto)
+            .show();
+
+        return rs;
     }
 
     function ver_estadotrack(){
@@ -365,7 +373,7 @@
             success:function(rs){
                 console.log(rs);
                 Vue.swal.close();
-                rs=JSON.parse(rs);
+                rs = mostrar_revision_sii(rs, TrackID);
                 Vue.swal({
                     title: 'RESULTADO. '+rs.estado,
                     icon: 'info',
@@ -373,8 +381,11 @@
                 });
             },
             error: function(error){
-
-                $('#listado_dte').html(formatear_error(error.responseText));
+                Vue.swal.close();
+                mostrar_revision_sii({
+                    estado: 'ERROR',
+                    mensaje: formatear_error(error.responseText || 'No fue posible consultar al SII.')
+                }, TrackID);
             }
         });
     }
@@ -424,37 +435,62 @@
 @section('contenido_ingresa_datos')
 
 <div class="contenedor">
-    <div class="periodo">
-        <div id="tipo_dte">
-            <div style="padding-left:2px"><strong>Documento:</strong></div>
+    <div class="estado-dte-panel">
+        <h5>Consultar documentos tributarios</h5>
+        <p class="estado-dte-ayuda">Seleccione el tipo de documento y un período para revisar los envíos realizados al SII.</p>
 
-            <div style="padding-left:2px"><input type="radio" name="tipo_dte" id="radio_boleta" value="39" checked><label for="radio_boleta">Boleta</label></div>
-            <div style="padding-left:2px"><input type="radio" name="tipo_dte" id="radio_factura" value="33"><label for="radio_factura">Factura</label></div>
-            <div style="padding-left:2px"><input type="radio" name="tipo_dte" id="radio_notacredito" value="61"><label for="radio_notacredito">Nota Cred.</label></div>
-            <div style="padding-left:2px"><input type="radio" name="tipo_dte" id="radio_notadebito" value="56"><label for="radio_notadebito">Nota Deb.</label></div>
-            <div style="padding-left:2px"><input type="radio" name="tipo_dte" id="radio_guiadespacho" value="52"><label for="radio_guiadespacho">Guía Desp.</label></div>
+        <div id="tipo_dte">
+            <strong>Tipo de documento:</strong>
+            <div><input type="radio" name="tipo_dte" id="radio_boleta" value="39" checked><label for="radio_boleta">Boleta</label></div>
+            <div><input type="radio" name="tipo_dte" id="radio_factura" value="33"><label for="radio_factura">Factura</label></div>
+            <div><input type="radio" name="tipo_dte" id="radio_notacredito" value="61"><label for="radio_notacredito">Nota de crédito</label></div>
+            <div><input type="radio" name="tipo_dte" id="radio_notadebito" value="56"><label for="radio_notadebito">Nota de débito</label></div>
+            <div><input type="radio" name="tipo_dte" id="radio_guiadespacho" value="52"><label for="radio_guiadespacho">Guía de despacho</label></div>
         </div>
-        <div id="fechainicial">
-            <label for="fechainicial">Fecha Inicial:</label>
-            <input type="date" name="ifechainicial" value='<?php echo date("Y-m-d"); ?>' id="ifechainicial" class="form-control form-control-sm">
-        </div>
-        <div id="fechafinal">
-            <label for="fechafinal">Fecha Final:</label>
-            <input type="date" name="ifechafinal" value='@php echo date("Y-m-d"); @endphp'  id="ifechafinal" class="form-control form-control-sm">
-        </div>
-        <div id="boton_buscar">
-            <button class="btn btn-success btn-lg" onclick="listar_dtes()">Buscar</button>
-        </div>
-        <div id="btn_enviar_correo">
-            <button class="btn btn-success btn-lg" onclick="enviar_correos()">Enviar Correo</button>
-        </div>
-        <div id="ver_trackid">
-            <input type="text" name="trackid" id="trackid" placeholder="TrackID">
-            <button class="btn btn-sm btn-info" onclick="ver_estadotrack()">ver</button>
+
+        <div class="form-row align-items-end mt-3">
+            <div id="fechainicial" class="form-group col-md-3">
+                <label for="ifechainicial"><strong>Desde</strong></label>
+                <input type="date" name="ifechainicial" value='<?php echo date("Y-m-d"); ?>' id="ifechainicial" class="form-control">
+            </div>
+            <div id="fechafinal" class="form-group col-md-3">
+                <label for="ifechafinal"><strong>Hasta</strong></label>
+                <input type="date" name="ifechafinal" value='@php echo date("Y-m-d"); @endphp' id="ifechafinal" class="form-control">
+            </div>
+            <div id="boton_buscar" class="form-group col-md-3">
+                <button type="button" class="btn btn-success btn-block" onclick="listar_dtes()">Buscar documentos</button>
+            </div>
+            <div id="btn_enviar_correo" class="form-group col-md-3">
+                <button type="button" class="btn btn-outline-success btn-block" onclick="enviar_correos()">Enviar correos</button>
+            </div>
         </div>
     </div>
-    <div id="listado_dte">
 
+    <div class="estado-dte-panel">
+        <h5>Consultar directamente por TrackID</h5>
+        <p class="estado-dte-ayuda">Use esta opción si conoce el identificador de seguimiento entregado por el SII.</p>
+        <div id="ver_trackid" class="input-group">
+            <input type="text" name="trackid" id="trackid" class="form-control" inputmode="numeric" placeholder="Ejemplo: 12618665418" aria-label="TrackID del envío">
+            <div class="input-group-append">
+                <button type="button" class="btn btn-info" onclick="ver_estadotrack()">Revisar estado</button>
+            </div>
+        </div>
+        <div class="estado-dte-leyenda" aria-label="Guía de estados del SII">
+            <span class="bg-success text-white">ACEPTADO</span>
+            <span class="bg-info text-white">EN REVISIÓN</span>
+            <span class="bg-warning text-dark">REPARO</span>
+            <span class="bg-danger text-white">RECHAZADO / ERROR</span>
+        </div>
+    </div>
+
+    <div id="revision_sii" class="alert" role="alert" aria-live="polite"></div>
+
+    <div class="estado-dte-panel">
+        <h5>Documentos encontrados</h5>
+        <p class="estado-dte-ayuda">Use “Ver Estado” en un documento para actualizar su situación directamente desde el SII.</p>
+        <div id="listado_dte">
+            <div class="text-muted text-center py-4">Seleccione los filtros y presione “Buscar documentos”.</div>
+        </div>
     </div>
 
 </div>

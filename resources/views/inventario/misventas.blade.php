@@ -103,6 +103,19 @@
                 }
             })
         }
+
+    function filtrarVentas(inputId, contenedorId) {
+        let termino = ($('#' + inputId).val() || '').toLowerCase().trim();
+        let visibles = 0;
+
+        $('#' + contenedorId + ' .venta-item').each(function () {
+            let coincide = ($(this).data('search') || '').toString().toLowerCase().indexOf(termino) !== -1;
+            $(this).toggle(coincide);
+            if (coincide) visibles++;
+        });
+
+        $('#' + contenedorId + ' .sin-resultados-filtro').toggle(visibles === 0);
+    }
 </script>
 @endsection
 
@@ -112,24 +125,39 @@
 
 @section('contenido_ingresa_datos')
 <div class="container-fluid py-3">
+    <div class="misventas-encabezado mb-4">
+        <div>
+            <h4 class="mb-1 font-weight-bold">Resumen de mis ventas</h4>
+            <p class="mb-0 text-muted">Consulte sus notas procesadas, ventas pendientes y clientes asociados.</p>
+        </div>
+        <div class="misventas-resumen">
+            <div><strong>{{ count($misventas) }}</strong><span>Facturadas</span></div>
+            <div><strong>{{ count($misnoventas) }}</strong><span>Pendientes</span></div>
+            <div><strong>{{ count($misclientes) }}</strong><span>Clientes</span></div>
+        </div>
+    </div>
+
     <!-- Tabs mejorados -->
     <ul id="tabs" class="nav nav-tabs nav-fill border-0 mb-4">
         <li class="nav-item mr-2">
             <a href="" data-target="#facturados" data-toggle="tab" class="nav-link active shadow-sm">
                 <i class="fas fa-check-circle me-2"></i>
                 <span class="font-weight-bold">FACTURADOS</span>
+                <span class="badge badge-light ml-2">{{ count($misventas) }}</span>
             </a>
         </li>
         <li class="nav-item mr-2">
             <a href="" data-target="#pendientes" data-toggle="tab" class="nav-link shadow-sm">
                 <i class="fas fa-clock me-2"></i>
                 <span class="font-weight-bold">PENDIENTES</span>
+                <span class="badge badge-light ml-2">{{ count($misnoventas) }}</span>
             </a>
         </li>
         <li class="nav-item mr-2">
             <a href="" data-target="#misclientes" data-toggle="tab" class="nav-link shadow-sm">
                 <i class="fas fa-users me-2"></i>
                 <span class="font-weight-bold">MIS CLIENTES</span>
+                <span class="badge badge-light ml-2">{{ count($misclientes) }}</span>
             </a>
         </li>
     </ul>
@@ -140,9 +168,9 @@
             <div class="row mb-4">
                 <div class="col-md-4 ml-auto">
                     <div class="input-group shadow-sm">
-                        <input type="search" class="form-control border-0" placeholder="Buscar por N° nota..." aria-label="Buscar">
+                        <input type="search" id="buscar_facturados" class="form-control border-0" placeholder="Nota, cliente o descripción..." aria-label="Buscar ventas facturadas" oninput="filtrarVentas('buscar_facturados', 'listado_facturados')">
                         <div class="input-group-append">
-                            <button class="btn btn-primary" type="button">
+                            <button class="btn btn-primary" type="button" onclick="filtrarVentas('buscar_facturados', 'listado_facturados')" aria-label="Buscar">
                                 <i class="fas fa-search"></i>
                             </button>
                         </div>
@@ -150,7 +178,7 @@
                 </div>
             </div>
             <!-- Cards mejorados -->
-            <div class="row">
+            <div class="row" id="listado_facturados">
                 @if(count($misventas) == 0)
                     <div class="col-md-12">
                         <div class="alert alert-info shadow-sm border-0" role="alert">
@@ -160,7 +188,7 @@
                     </div>
                 @endif
                 @foreach($misventas as $mv)
-                    <div class="col-lg-3 col-md-4 col-sm-6 mb-4">
+                    <div class="col-xl-3 col-lg-4 col-md-6 mb-4 venta-item" data-search="{{ $mv->numero_carrito === null ? $mv->id : $mv->numero_carrito }} {{ $mv->cliente }} {{ $mv->titulo }}">
                         <div class="card h-100 border-0 shadow-sm venta-card">
                             <!-- Header del card -->
                             <div class="card-header bg-gradient-primary text-white border-0">
@@ -222,6 +250,9 @@
                         </div>
                     </div>
                 @endforeach
+                <div class="col-12 sin-resultados-filtro" style="display:none">
+                    <div class="alert alert-info">No se encontraron ventas facturadas con ese criterio.</div>
+                </div>
             </div>
 
         </div>
@@ -231,9 +262,9 @@
             <div class="row mb-4">
                 <div class="col-md-4 ml-auto">
                     <div class="input-group shadow-sm">
-                        <input type="search" class="form-control border-0" placeholder="Buscar por N° nota..." aria-label="Buscar">
+                        <input type="search" id="buscar_pendientes" class="form-control border-0" placeholder="Nota, cliente o descripción..." aria-label="Buscar ventas pendientes" oninput="filtrarVentas('buscar_pendientes', 'listado_pendientes')">
                         <div class="input-group-append">
-                            <button class="btn btn-warning" type="button">
+                            <button class="btn btn-warning" type="button" onclick="filtrarVentas('buscar_pendientes', 'listado_pendientes')" aria-label="Buscar">
                                 <i class="fas fa-search"></i>
                             </button>
                         </div>
@@ -242,7 +273,7 @@
             </div>
 
             <!-- Cards pendientes -->
-            <div class="row">
+            <div class="row" id="listado_pendientes">
                 @if(count($misnoventas) == 0)
                     <div class="col-md-12">
                         <div class="alert alert-warning shadow-sm border-0" role="alert">
@@ -252,7 +283,7 @@
                     </div>
                 @endif
                 @foreach($misnoventas as $mv)
-                    <div class="col-lg-3 col-md-4 col-sm-6 mb-4">
+                    <div class="col-xl-3 col-lg-4 col-md-6 mb-4 venta-item" data-search="{{ $mv->numero_carrito === null ? $mv->id : $mv->numero_carrito }} {{ $mv->cliente }} {{ $mv->titulo }}">
                         <div class="card h-100 border-0 shadow-sm venta-card">
                             <!-- Header del card -->
                             <div class="card-header bg-gradient-warning text-dark border-0">
@@ -314,48 +345,57 @@
                         </div>
                     </div>
                 @endforeach
+                <div class="col-12 sin-resultados-filtro" style="display:none">
+                    <div class="alert alert-warning">No se encontraron ventas pendientes con ese criterio.</div>
+                </div>
             </div>
         </div>
         <div id="misclientes" class="tab-pane fade">
-            <div class="container">
-
-                <div class="row">
+            <div class="estado-clientes-panel">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h5 class="mb-1 font-weight-bold">Clientes asociados</h5>
+                        <p class="mb-0 text-muted">Información de contacto de los clientes vinculados a sus ventas.</p>
+                    </div>
+                </div>
+                <div class="table-responsive">
                     @if(count($misclientes) == 0)
-                        <div class="col-md-12">
-                            <div class="alert alert-warning" role="alert">
-                                No tienes clientes
-                            </div>
+                        <div class="alert alert-warning" role="alert">
+                            No tiene clientes asociados todavía.
                         </div>
                     @endif
-                    <table class="table letra_pequeña">
+                    <table class="table table-hover letra_pequeña mb-0">
                         <thead>
                             <tr>
                                 <th>Nombre</th>
                                 <th>Email</th>
-                                <th>Fecha</th>
-                                <th>Acciones</th>
+                                <th>Teléfono</th>
+                                <th>Asociado desde</th>
+                                <th class="text-right">Contacto</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach($misclientes as $mc)
                                 <tr>
                                     <td>{{ $mc->nombres }}</td>
-                                    <td>{{ $mc->email }}</td>
+                                    <td>{{ $mc->email ?: 'Sin email' }}</td>
+                                    <td>{{ $mc->telf1 ?: 'Sin teléfono' }}</td>
                                     <td>{{ $mc->created_at }}</td>
-                                    <td>
-                                        <a href="#" class="btn btn-outline-primary btn-sm"><i class="fas fa-search"></i> Ver</a>
+                                    <td class="text-right">
+                                        @if($mc->email)
+                                            <a href="mailto:{{ $mc->email }}" class="btn btn-outline-primary btn-sm"><i class="fas fa-envelope"></i> Escribir</a>
+                                        @else
+                                            <span class="text-muted">No disponible</span>
+                                        @endif
                                     </td>
                                 </tr>
                             @endforeach
                         </tbody>
                     </table>
-
                 </div>
             </div>
-
         </div>
     </div>
-    <span class="badge badge-danger">En construccion</span>
 
 </div>
 
@@ -383,6 +423,48 @@
 
 @section('style')
 <style>
+    .misventas-encabezado {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 20px 22px;
+        background: #fff;
+        border: 1px solid #e3e8ed;
+        border-radius: 12px;
+        box-shadow: 0 3px 12px rgba(25, 55, 75, .07);
+    }
+
+    .misventas-resumen {
+        display: flex;
+        gap: 10px;
+    }
+
+    .misventas-resumen > div {
+        min-width: 92px;
+        padding: 9px 14px;
+        text-align: center;
+        background: #f4f7fa;
+        border-radius: 8px;
+    }
+
+    .misventas-resumen strong,
+    .misventas-resumen span {
+        display: block;
+    }
+
+    .misventas-resumen strong {
+        color: #356b8d;
+        font-size: 1.25rem;
+        line-height: 1.1;
+    }
+
+    .misventas-resumen span {
+        margin-top: 3px;
+        color: #6c757d;
+        font-size: .75rem;
+    }
+
     /* Estilos para tabs mejorados */
     #tabs .nav-link {
         border-radius: 10px 10px 0 0;
@@ -409,6 +491,7 @@
     .venta-card {
         transition: all 0.3s ease;
         overflow: hidden;
+        border-radius: 10px;
     }
 
     .venta-card:hover {
@@ -510,6 +593,50 @@
 
     .modal-header {
         border-radius: 15px 15px 0 0;
+    }
+
+    .estado-clientes-panel {
+        padding: 20px;
+        background: #fff;
+        border: 1px solid #e3e8ed;
+        border-radius: 10px;
+        box-shadow: 0 3px 12px rgba(25, 55, 75, .07);
+    }
+
+    .estado-clientes-panel thead th {
+        border-top: 0;
+        color: #526574;
+        background: #f7f9fb;
+    }
+
+    @media (max-width: 767px) {
+        .misventas-encabezado {
+            align-items: flex-start;
+            flex-direction: column;
+            padding: 16px;
+        }
+
+        .misventas-resumen {
+            width: 100%;
+        }
+
+        .misventas-resumen > div {
+            flex: 1;
+            min-width: 0;
+            padding: 8px 4px;
+        }
+
+        #tabs {
+            display: block;
+        }
+
+        #tabs .nav-item {
+            margin: 0 0 7px !important;
+        }
+
+        #tabs .nav-link {
+            border-radius: 8px;
+        }
     }
 </style>
 @endsection

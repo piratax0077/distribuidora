@@ -5260,11 +5260,11 @@ class ventas_controlador extends Controller
                     //Guardamos la boleta igualmente con el estado de rechazado
                     // en caso de que no se envié al sii, se debe guardar un registro en la tabla dte_rechazados
                     $dte_rechazado = new dte_rechazados;
-                    $dte_rechazado->tipo_doc = $Datos['tipo_dte'];
+                    $dte_rechazado->tipo_doc = $tipo_dte;
                     $dte_rechazado->fecha_emision = Carbon::today()->format('d-m-Y');
-                    $dte_rechazado->folio_doc = $Datos['folio_dte'];
-                    $dte_rechazado->id_cliente = $idcliente;
-                    //$dte_rechazado->save();
+                    $dte_rechazado->folio_doc = Session::get('folio_dte');
+                    $dte_rechazado->id_cliente = $id_cliente;
+                    $dte_rechazado->save();
                     return json_encode($rs);
                 }
 
@@ -5427,11 +5427,11 @@ class ventas_controlador extends Controller
                 }else{
                     // en caso de que no se genere el xml, se debe guardar un registro en la tabla dte_rechazados
                     $dte_rechazado = new dte_rechazados;
-                    $dte_rechazado->tipo_doc = $Datos['tipo_dte'];
+                    $dte_rechazado->tipo_doc = $tipo_dte;
                     $dte_rechazado->fecha_emision = Carbon::today()->format('d-m-Y');
-                    $dte_rechazado->folio_doc = $Datos['folio_dte'];
-                    $dte_rechazado->id_cliente = $idcliente;
-                    //$dte_rechazado->save();
+                    $dte_rechazado->folio_doc = Session::get('folio_dte');
+                    $dte_rechazado->id_cliente = $id_cliente;
+                    $dte_rechazado->save();
                     return json_encode($rs);
                     //$TrackID="---";
                     //$estado_sii=$rs['estado'];

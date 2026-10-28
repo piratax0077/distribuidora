@@ -33,6 +33,15 @@
         }
     @endphp
    <style>
+       :root {
+            --ips-blue: #356b8d;
+            --ips-blue-dark: #274c66;
+            --ips-blue-light: #dce7ed;
+            --ips-slate: #566671;
+            --ips-surface: #f3f6f7;
+            --ips-border: #d7e0e5;
+       }
+
        /* Estilos Base */
        body {
             background: #fff;
@@ -44,7 +53,7 @@
        /* Estilos Profesionales para Login */
         .login-container {
             min-height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #203e52 0%, #356b8d 58%, #496f84 100%);
             padding: 40px 20px;
         }
 
@@ -56,20 +65,20 @@
 
         .logo-section img {
             max-width: 180px;
-            filter: drop-shadow(0 4px 12px rgba(0,0,0,0.15));
+            filter: drop-shadow(0 4px 10px rgba(0,0,0,0.22));
             transition: transform 0.3s ease;
         }
 
         .logo-section img:hover {
-            transform: scale(1.05);
+            transform: scale(1.02);
         }
 
         .user-card {
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            border: none;
-            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,.28);
+            border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 14px rgba(15, 36, 49, 0.18);
             background: white;
             margin-bottom: 24px;
             animation: fadeInUp 0.6s ease;
@@ -77,22 +86,22 @@
         }
 
         .user-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
+            transform: translateY(-4px);
+            box-shadow: 0 10px 24px rgba(15, 36, 49, 0.24);
         }
 
         .user-card-header {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            background: #315d78;
             color: white;
             padding: 16px;
             font-weight: 600;
             font-size: 1.1rem;
             text-align: center;
-            border-bottom: none;
+            border-bottom: 1px solid #284e65;
         }
 
         .user-card-body {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            background: #f4f7f8;
             padding: 24px;
             text-align: center;
         }
@@ -107,37 +116,37 @@
             width: 120px;
             height: 120px;
             border-radius: 50%;
-            border: 4px solid white;
+            border: 4px solid #dce7ed;
             object-fit: cover;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 4px 12px rgba(39, 76, 102, 0.18);
         }
 
         .user-avatar:hover {
-            transform: scale(1.1);
-            border-color: #f5576c;
+            transform: scale(1.04);
+            border-color: var(--ips-blue);
         }
 
         .user-role-badge {
-            background: rgba(255, 255, 255, 0.95);
-            color: #667eea;
+            background: var(--ips-blue-light);
+            color: var(--ips-blue-dark);
             padding: 6px 16px;
             border-radius: 20px;
             font-size: 0.9rem;
             font-weight: 600;
             display: inline-block;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            box-shadow: none;
         }
 
         .login-modal .modal-content {
-            border: none;
-            border-radius: 20px;
+            border: 1px solid var(--ips-border);
+            border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 18px 45px rgba(15, 36, 49, 0.28);
         }
 
         .login-modal .modal-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            background: linear-gradient(135deg, var(--ips-blue-dark) 0%, var(--ips-blue) 100%) !important;
             color: white;
             border-bottom: none;
             padding: 24px;
@@ -150,11 +159,11 @@
 
         .login-modal .modal-body {
             padding: 40px;
-            background: #f8f9fa;
+            background: var(--ips-surface);
         }
 
         .login-modal .modal-footer {
-            background: #f8f9fa;
+            background: var(--ips-surface);
             border-top: none;
             padding: 20px;
         }
@@ -189,8 +198,8 @@
         }
 
         .form-control:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.15);
+            border-color: var(--ips-blue);
+            box-shadow: 0 0 0 0.2rem rgba(53, 107, 141, 0.15);
         }
 
         .form-control:read-only {
@@ -199,30 +208,30 @@
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--ips-blue);
             border: none;
             border-radius: 10px;
             padding: 12px 32px;
             font-weight: 600;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 4px 10px rgba(39, 76, 102, 0.22);
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 14px rgba(39, 76, 102, 0.3);
+            background: var(--ips-blue-dark);
         }
 
         .btn-link {
-            color: #667eea;
+            color: var(--ips-blue);
             font-weight: 500;
             text-decoration: none;
             transition: all 0.3s ease;
         }
 
         .btn-link:hover {
-            color: #764ba2;
+            color: var(--ips-blue-dark);
             text-decoration: none;
         }
 
@@ -235,13 +244,13 @@
         }
 
         .alert-success {
-            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            background: #e4efe9;
             color: #155724;
             border-left: 4px solid #28a745;
         }
 
         .alert-danger {
-            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+            background: #f3e4e4;
             color: #721c24;
             border-left: 4px solid #dc3545;
         }
@@ -290,8 +299,8 @@
 
         /* Checkbox personalizado */
         .form-check-input:checked {
-            background-color: #667eea;
-            border-color: #667eea;
+            background-color: var(--ips-blue);
+            border-color: var(--ips-blue);
         }
 
         /* Responsive */
