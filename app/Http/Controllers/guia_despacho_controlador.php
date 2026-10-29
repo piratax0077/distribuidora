@@ -455,8 +455,7 @@ class guia_despacho_controlador extends Controller
                 $item->cantidad_disponible = $this->obtenerCantidadDisponibleDevolucion(
                     $numeroNc,
                     'nc',
-                    (int) $item->id_repuestos,
-                    (int) $item->id_local
+                    (int) $item->id_repuestos
                 );
             }
 
@@ -771,8 +770,7 @@ class guia_despacho_controlador extends Controller
                     ->obtenerCantidadDisponibleDevolucion(
                         $numeroDocumento,
                         $tipoDocumento,
-                        $idRepuesto,
-                        $localId
+                        $idRepuesto
                     );
 
                 if ($cantidadDisponible <= 0) {
@@ -874,13 +872,11 @@ class guia_despacho_controlador extends Controller
 private function obtenerCantidadDisponibleDevolucion(
     $numeroDocumento,
     $tipoDocumento,
-    $idRepuesto,
-    $localId
+    $idRepuesto
 ) {
     $numeroDocumento = trim((string) $numeroDocumento);
     $tipoDocumento = strtolower(trim((string) $tipoDocumento));
     $idRepuesto = (int) $idRepuesto;
-    $localId = (int) $localId;
 
     /*
      * Cantidad original vendida en el documento.
@@ -996,7 +992,6 @@ private function obtenerCantidadDisponibleDevolucion(
                 $notaCredito->id
             )
             ->where('id_repuestos', $idRepuesto)
-            ->where('id_local', $localId)
             ->sum('cantidad');
     } elseif ($tipoDocumento === 'bo') {
         $documento = boleta::where(
@@ -1018,7 +1013,6 @@ private function obtenerCantidadDisponibleDevolucion(
                 $documento->id
             )
             ->where('id_repuestos', $idRepuesto)
-            ->where('id_local', $localId)
             ->sum('cantidad');
     } elseif ($tipoDocumento === 'fa') {
         $documento = factura::where(
@@ -1040,7 +1034,6 @@ private function obtenerCantidadDisponibleDevolucion(
                 $documento->id
             )
             ->where('id_repuestos', $idRepuesto)
-            ->where('id_local', $localId)
             ->sum('cantidad');
     } else {
         throw \Illuminate\Validation\ValidationException
@@ -1067,7 +1060,6 @@ private function obtenerCantidadDisponibleDevolucion(
         )
         ->where('tipo_doc', $tipoDocumento)
         ->where('repuesto_id', $idRepuesto)
-        ->where('local_id', $localId)
         ->sum('cantidad');
 
     return max(
@@ -1077,42 +1069,73 @@ private function obtenerCantidadDisponibleDevolucion(
     );
 }
 
-    public function eliminar_devolucion(Request $req){
+    public function eliminar_devolucion(Request $request)
+    {
+        $datos = $request->validate([
+            'id_devolucion' => ['required', 'integer', 'exists:devolucion_mercaderia,id'],
+            'doc_index' => ['nullable', 'integer', 'min:0']
+        ]);
+
         try {
-            $id_devolucion = $req->id_devolucion;
+            $resultado = DB::transaction(function () use ($datos) {
+                $devolucion = devolucion_mercaderia::where('id', $datos['id_devolucion'])
+                    ->where('usuario_id', Auth::id())
+                    ->where('activo', 1)
+                    ->lockForUpdate()
+                    ->first();
 
-            if(!$id_devolucion){
-                return ['success' => false, 'message' => 'No se recibió el ID de devolución'];
-            }
+                if (!$devolucion) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'id_devolucion' => 'La devolución no existe, ya fue procesada o pertenece a otro usuario.'
+                    ]);
+                }
 
-            $devolucion = devolucion_mercaderia::where('id', $id_devolucion)->first();
+                $numeroDocumento = $devolucion->num_nc;
+                $tipoDocumento = $devolucion->tipo_doc;
+                $repuestoId = (int) $devolucion->repuesto_id;
+                $cantidad = (int) $devolucion->cantidad;
 
-            if($devolucion){
-                $num_nc = $devolucion->num_nc;
-                $usuario_id = $devolucion->usuario_id;
-
-                // Eliminar el registro
                 $devolucion->delete();
 
-                // Obtener las devoluciones restantes
-                $devoluciones = devolucion_mercaderia::select('repuestos.*','devolucion_mercaderia.id as id_devolucion','devolucion_mercaderia.cantidad','locales.local_nombre','users.name')
-                                            ->join('repuestos','devolucion_mercaderia.repuesto_id','repuestos.id')
-                                            ->join('locales','devolucion_mercaderia.local_id','locales.id')
-                                            ->join('users','devolucion_mercaderia.usuario_id','users.id')
-                                            ->where('devolucion_mercaderia.usuario_id',$usuario_id)
-                                            ->where('devolucion_mercaderia.num_nc',$num_nc)
-                                            ->where('devolucion_mercaderia.activo',1)
-                                            ->get();
+                $devoluciones = $this->damedevoluciones($numeroDocumento, $tipoDocumento);
+                $cantidadDisponible = $this->obtenerCantidadDisponibleDevolucion(
+                    $numeroDocumento,
+                    $tipoDocumento,
+                    $repuestoId
+                );
 
-                $v = view('fragm.devoluciones_table',['devoluciones' => $devoluciones])->render();
+                return [
+                    'html' => view('fragm.devoluciones_table', [
+                        'devoluciones' => $devoluciones,
+                        'doc_index' => $datos['doc_index'] ?? null
+                    ])->render(),
+                    'repuesto_id' => $repuestoId,
+                    'cantidad_restaurada' => $cantidad,
+                    'cantidad_disponible' => $cantidadDisponible
+                ];
+            });
 
-                return ['success' => true, 'html' => $v, 'message' => 'Devolución eliminada correctamente'];
-            }else{
-                return ['success' => false, 'message' => 'Devolución no encontrada'];
-            }
+            return response()->json([
+                'success' => true,
+                'message' => 'El producto fue quitado de la devolución.',
+                'html' => $resultado['html'],
+                'repuesto_id' => $resultado['repuesto_id'],
+                'cantidad_restaurada' => $resultado['cantidad_restaurada'],
+                'cantidad_disponible' => $resultado['cantidad_disponible']
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            \Log::error('Error eliminando producto de devolución', [
+                'usuario_id' => Auth::id(),
+                'id_devolucion' => $datos['id_devolucion'] ?? null,
+                'mensaje' => $e->getMessage()
+            ]);
 
-        } catch (\Exception $e) {
-            return ['success' => false, 'message' => $e->getMessage()];
+            return response()->json([
+                'success' => false,
+                'message' => 'No fue posible quitar el producto de la devolución.'
+            ], 500);
         }
     }
 
@@ -1120,7 +1143,7 @@ private function obtenerCantidadDisponibleDevolucion(
 
         try {
 
-            $devoluciones = $this->damedevoluciones($num_nc);
+            $devoluciones = $this->damedevoluciones($num_nc, 'nc');
             if($devoluciones->count() == 0){
                 return ['ERROR'];
             }
@@ -1138,7 +1161,7 @@ private function obtenerCantidadDisponibleDevolucion(
 
         try {
 
-            $devoluciones = $this->damedevoluciones($num_doc);
+            $devoluciones = $this->damedevoluciones($num_doc, $tipo_doc);
             if($devoluciones->count() == 0){
                 return ['ERROR'];
             }
@@ -1497,7 +1520,7 @@ private function obtenerCantidadDisponibleDevolucion(
 
     }
 
-    public function damedevoluciones($num_nc){
+    public function damedevoluciones($num_nc, $tipo_doc = null){
         $devoluciones = devolucion_mercaderia::select('repuestos.*','devolucion_mercaderia.id as id_devolucion','devolucion_mercaderia.cantidad','locales.local_nombre','users.name')
                                             ->join('repuestos','devolucion_mercaderia.repuesto_id','repuestos.id')
                                             ->join('locales','devolucion_mercaderia.local_id','locales.id')
@@ -1505,6 +1528,9 @@ private function obtenerCantidadDisponibleDevolucion(
                                             ->where('devolucion_mercaderia.usuario_id',Auth::user()->id)
                                             ->where('devolucion_mercaderia.num_nc',$num_nc)
                                             ->where('devolucion_mercaderia.activo',1)
+                                            ->when($tipo_doc, function ($query) use ($tipo_doc) {
+                                                $query->where('devolucion_mercaderia.tipo_doc', $tipo_doc);
+                                            })
                                             ->get();
         return $devoluciones;
     }

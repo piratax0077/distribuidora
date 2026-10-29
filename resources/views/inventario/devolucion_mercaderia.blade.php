@@ -230,7 +230,8 @@ function confirmar_devolucion(repuesto_id, doc_index){
       cantidad: cantidad,
       local_id: local_id,
       num_nc: numeroDocumento,
-      tipo_doc: tipoDocumento
+      tipo_doc: tipoDocumento,
+      doc_index: (typeof doc_index !== 'undefined' ? doc_index : null)
     };
 
     console.log(data);
@@ -268,6 +269,9 @@ function confirmar_devolucion(repuesto_id, doc_index){
           $('#contenido').html(html);
         }
 
+        cantidadVendidaInput.val(resp.cantidad_disponible);
+        cantidadInput.attr('max', resp.cantidad_disponible).val(1);
+
         Vue.swal({
           icon: 'success',
           title: 'Devolución registrada',
@@ -279,6 +283,77 @@ function confirmar_devolucion(repuesto_id, doc_index){
       error: function(xhr){
         Vue.swal.close();
         mostrarError(obtenerMensajeError(xhr, 'Error al procesar la devolución.'));
+      }
+    });
+  });
+}
+
+function eliminar_devolucion(idDevolucion, docIndex){
+  Vue.swal({
+    title: '¿Quitar producto?',
+    text: 'El producto se eliminará de la lista de esta devolución.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc3545',
+    cancelButtonColor: '#6c757d',
+    confirmButtonText: 'Sí, quitar',
+    cancelButtonText: 'Cancelar',
+    reverseButtons: true
+  }).then((result) => {
+    if(!result.isConfirmed){
+      return;
+    }
+
+    $.ajaxSetup({
+      headers: {
+        'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+      }
+    });
+
+    $.ajax({
+      type: 'post',
+      url: '/guiadespacho/eliminar_devolucion',
+      data: {
+        id_devolucion: idDevolucion,
+        doc_index: docIndex
+      },
+      beforeSend: function(){
+        mostrarCargando('Quitando producto');
+      },
+      success: function(resp){
+        Vue.swal.close();
+
+        if(!resp || resp.success !== true){
+          mostrarError((resp && resp.message) || 'No fue posible quitar el producto.');
+          return;
+        }
+
+        const tieneIndice = docIndex !== null && typeof docIndex !== 'undefined';
+        const tableId = tieneIndice
+          ? '#table_devolucion_' + String(docIndex)
+          : '#table_devolucion';
+
+        $(tableId).html(resp.html);
+
+        const prefijo = tieneIndice ? String(docIndex) + '-' : '';
+        const disponibleInput = $('#merma-' + prefijo + resp.repuesto_id);
+        const cantidadInput = $('#cantidad-' + prefijo + resp.repuesto_id);
+        const nuevaDisponibilidad = Number(resp.cantidad_disponible || 0);
+
+        disponibleInput.val(nuevaDisponibilidad);
+        cantidadInput.attr('max', nuevaDisponibilidad).val(1).prop('disabled', false);
+
+        Vue.swal({
+          icon: 'success',
+          title: 'Producto quitado',
+          text: resp.message,
+          timer: 1800,
+          showConfirmButton: false
+        });
+      },
+      error: function(xhr){
+        Vue.swal.close();
+        mostrarError(obtenerMensajeError(xhr, 'No fue posible quitar el producto.'));
       }
     });
   });
